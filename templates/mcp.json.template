@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "coderecall": {
+      "command": "bun",
+      "args": ["run", "{{CODERECALL_ENTRY}}"],
+      "env": {
+        "CODERECALL_PROJECT_ROOT": "{{PROJECT_ROOT}}"
+      }
+    }
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "indexPath": ".coderecall",
+  "extensions": [".ts", ".tsx", ".js", ".jsx"],
+  "ignore": [
+    "**/node_modules/**",
+    "**/dist/**",
+    "**/build/**",
+    "**/.next/**",
+    "**/.git/**",
+    "**/coverage/**",
+    "**/.coderecall/**"
+  ],
+  "embeddingModel": "Xenova/bge-small-en-v1.5",
+  "staleAfterDays": 14,
+  "veryStaleAfterDays": 30
+}

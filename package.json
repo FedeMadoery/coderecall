@@ -1,0 +1,49 @@
+{
+  "name": "coderecall",
+  "version": "0.1.0",
+  "description": "Local-first MCP server that gives your AI coding agent a memory of your repo: hybrid code search + a knowledge store, in a single SQLite file with no API keys.",
+  "module": "src/index.ts",
+  "type": "module",
+  "license": "MIT",
+  "bin": {
+    "coderecall": "./scripts/cli.ts"
+  },
+  "scripts": {
+    "start": "bun run src/index.ts",
+    "cli": "bun run scripts/cli.ts",
+    "init": "bun run scripts/cli.ts init",
+    "index": "bun run scripts/cli.ts index",
+    "search": "bun run scripts/cli.ts search",
+    "stats": "bun run scripts/cli.ts stats",
+    "test": "bun test"
+  },
+  "engines": {
+    "bun": ">=1.1.0"
+  },
+  "keywords": [
+    "mcp",
+    "claude",
+    "claude-code",
+    "cursor",
+    "semantic-search",
+    "code-search",
+    "embeddings",
+    "memory",
+    "rag",
+    "local-first"
+  ],
+  "devDependencies": {
+    "@types/bun": "latest",
+    "prettier": "^3.7.4",
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.24.3",
+    "@types/better-sqlite3": "^7.6.13",
+    "@xenova/transformers": "^2.17.2",
+    "better-sqlite3": "^12.10.0",
+    "glob": "^13.0.0",
+    "sqlite-vec": "^0.1.9",
+    "zod": "^4.1.13"
+  }
+}
