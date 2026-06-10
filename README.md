@@ -37,12 +37,24 @@
 
 ## Quick start
 
+### 🤖 Agent-first (recommended)
+
+Open Claude Code (or Cursor) inside the project you want to give a memory to, and paste this prompt:
+
+```
+Set up coderecall (https://github.com/FedeMadoery/coderecall) in this project: install bun if it's missing, clone the repo to ~/tools/coderecall and run `bun install` there (or `git pull` if it already exists), then from this project run `bun ~/tools/coderecall/scripts/cli.ts init && bun ~/tools/coderecall/scripts/cli.ts index`. Append the "Code Memory" snippet from the repo's README to my CLAUDE.md (create it if missing), then tell me to restart so the mcp__coderecall__search tools load. Don't commit or push anything.
+```
+
+The agent clones the tool to `~/tools/coderecall`, wires it into this project's `.mcp.json`, runs the first index (~30 MB model download), and updates `CLAUDE.md`. Restart Claude Code when it's done.
+
+### Manual
+
 ```bash
 # 1. Install bun (one-time)
 curl -fsSL https://bun.sh/install | bash
 
 # 2. Clone and install
-git clone https://github.com/<your-org>/coderecall.git ~/tools/coderecall
+git clone https://github.com/FedeMadoery/coderecall.git ~/tools/coderecall
 cd ~/tools/coderecall && bun install
 
 # 3. Wire it into a project
