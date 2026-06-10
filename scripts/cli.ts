@@ -9,7 +9,7 @@ import { MarkdownImporter } from "../src/indexer/markdown";
 import { loadConfig, detectLanguage, DEFAULT_IGNORE, DEFAULTS } from "../src/config";
 
 import type { ExpansionMode, IndexFreshness } from "../src/types";
-import { join, resolve, isAbsolute, dirname } from "path";
+import { join, resolve, isAbsolute, dirname, relative, sep } from "path";
 import { mkdirSync, existsSync, readFileSync, writeFileSync, statSync } from "fs";
 import { fileURLToPath } from "url";
 
@@ -371,6 +371,12 @@ async function runInit(parsed: ParsedOptions) {
     }
   }
 
+  // Detect vendored install (coderecall lives inside the target project).
+  // When vendored, write a portable relative server path and omit the
+  // absolute CODERECALL_PROJECT_ROOT env var — the server falls back to
+  // the MCP client's launch CWD, which is the project root.
+  const isVendored = PACKAGE_ROOT === targetRoot || PACKAGE_ROOT.startsWith(targetRoot + sep);
+
   // 2. .mcp.json (project-level Claude Code config)
   if (writeMcp) {
     const mcpPath =
@@ -378,13 +384,17 @@ async function runInit(parsed: ParsedOptions) {
         ? join(targetRoot, ".cursor", "mcp.json")
         : join(targetRoot, ".mcp.json");
 
-    const mcpEntry = {
+    const serverEntryArg = isVendored
+      ? "./" + relative(targetRoot, SERVER_ENTRY)
+      : SERVER_ENTRY;
+
+    const mcpEntry: { command: string; args: string[]; env?: Record<string, string> } = {
       command: "bun",
-      args: ["run", SERVER_ENTRY],
-      env: {
-        CODERECALL_PROJECT_ROOT: targetRoot
-      }
+      args: ["run", serverEntryArg]
     };
+    if (!isVendored) {
+      mcpEntry.env = { CODERECALL_PROJECT_ROOT: targetRoot };
+    }
 
     let mcpDoc: { mcpServers: Record<string, unknown> };
 
@@ -419,13 +429,22 @@ async function runInit(parsed: ParsedOptions) {
 
   // 3. .gitignore hint
   const gitignorePath = join(targetRoot, ".gitignore");
-  const ignoreLine = ".coderecall/";
+  const ignoreLines = [".coderecall/"];
+  if (isVendored) {
+    const vendorPath = relative(targetRoot, PACKAGE_ROOT);
+    if (vendorPath) ignoreLines.push(`${vendorPath}/node_modules/`);
+  }
   if (existsSync(gitignorePath)) {
-    const content = readFileSync(gitignorePath, "utf-8");
-    if (!content.split("\n").some((l) => l.trim() === ignoreLine)) {
-      writeFileSync(gitignorePath, content.replace(/\n*$/, "\n") + ignoreLine + "\n");
-      console.log(`Added '${ignoreLine}' to .gitignore`);
+    let content = readFileSync(gitignorePath, "utf-8");
+    let touched = false;
+    for (const line of ignoreLines) {
+      if (!content.split("\n").some((l) => l.trim() === line)) {
+        content = content.replace(/\n*$/, "\n") + line + "\n";
+        touched = true;
+        console.log(`Added '${line}' to .gitignore`);
+      }
     }
+    if (touched) writeFileSync(gitignorePath, content);
   }
 
   console.log(`

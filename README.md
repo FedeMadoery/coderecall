@@ -37,15 +37,17 @@
 
 ## Quick start
 
+**coderecall is vendored per project** — its source lives at `<your-project>/tools/coderecall/`, gets committed alongside your code, and every dev shares the same pinned version. The local index (`.coderecall/`) and `tools/coderecall/node_modules/` are gitignored automatically by `init`.
+
 ### 🤖 Agent-first (recommended)
 
 Open Claude Code (or Cursor) inside the project you want to give a memory to, and paste this prompt:
 
 ```
-Set up coderecall (https://github.com/FedeMadoery/coderecall) in this project: install bun if it's missing, clone the repo to ~/tools/coderecall and run `bun install` there (or `git pull` if it already exists), then from this project run `bun ~/tools/coderecall/scripts/cli.ts init && bun ~/tools/coderecall/scripts/cli.ts index`. Append the "Code Memory" snippet from the repo's README to my CLAUDE.md (create it if missing), then tell me to restart so the mcp__coderecall__search tools load. Don't commit or push anything.
+Set up coderecall (https://github.com/FedeMadoery/coderecall) in this project: install bun if it's missing, vendor the repo into ./tools/coderecall with `bunx degit FedeMadoery/coderecall tools/coderecall` (so no nested .git), run `bun install` inside tools/coderecall, then from this project's root run `bun ./tools/coderecall/scripts/cli.ts init && bun ./tools/coderecall/scripts/cli.ts index`. Append the "Code Memory" snippet from the repo's README to my CLAUDE.md (create it if missing), then tell me to restart so the mcp__coderecall__search tools load. Don't commit or push anything.
 ```
 
-The agent clones the tool to `~/tools/coderecall`, wires it into this project's `.mcp.json`, runs the first index (~30 MB model download), and updates `CLAUDE.md`. Restart Claude Code when it's done.
+The agent vendors the tool into `./tools/coderecall`, wires it into this project's `.mcp.json` with a portable relative path, runs the first index (~30 MB model download), and updates `CLAUDE.md`. Restart Claude Code when it's done.
 
 ### Manual
 
@@ -53,21 +55,26 @@ The agent clones the tool to `~/tools/coderecall`, wires it into this project's 
 # 1. Install bun (one-time)
 curl -fsSL https://bun.sh/install | bash
 
-# 2. Clone and install
-git clone https://github.com/FedeMadoery/coderecall.git ~/tools/coderecall
-cd ~/tools/coderecall && bun install
+# 2. From your project root, vendor coderecall into ./tools/coderecall
+bunx degit FedeMadoery/coderecall tools/coderecall
+cd tools/coderecall && bun install && cd ../..
 
-# 3. Wire it into a project
-cd /path/to/your/project
-bun ~/tools/coderecall/scripts/cli.ts init
+# 3. Wire it into the project (writes .coderecall.json + a relative .mcp.json entry)
+bun ./tools/coderecall/scripts/cli.ts init
 
 # 4. Index the codebase (downloads ~30 MB embedding model on first run)
-bun ~/tools/coderecall/scripts/cli.ts index
+bun ./tools/coderecall/scripts/cli.ts index
 
 # 5. Restart Claude Code (or Cursor). The `mcp__coderecall__search` tools appear.
+
+# 6. Commit ./tools/coderecall — its node_modules is gitignored, your team gets a pinned version.
+git add tools/coderecall .gitignore .coderecall.json .mcp.json
+git commit -m "Add coderecall MCP server"
 ```
 
-> **Tip:** `alias coderecall="bun ~/tools/coderecall/scripts/cli.ts"`, then `coderecall init`, `coderecall index`, `coderecall search "..."`.
+> **Tip:** `alias coderecall="bun ./tools/coderecall/scripts/cli.ts"`, then `coderecall init`, `coderecall index`, `coderecall search "..."`.
+
+**Updating coderecall**: re-run `bunx degit FedeMadoery/coderecall tools/coderecall --force && cd tools/coderecall && bun install` to pull the latest version. Diff and commit — your team gets the update on next pull.
 
 ### Recommended `CLAUDE.md` note
 
