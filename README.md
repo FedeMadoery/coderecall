@@ -2,6 +2,10 @@
 
 > Your repo's memory, indexed locally. One SQLite file. Zero API keys.
 
+<p align="center">
+  <img src="docs/hero.webp" alt="coderecall — confidence-tiered local code search and knowledge store for AI coding agents" width="900">
+</p>
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![MCP](https://img.shields.io/badge/MCP-compatible-blue.svg)](https://modelcontextprotocol.io)
 [![Local-first](https://img.shields.io/badge/local--first-no%20API%20key-brightgreen.svg)](#)
