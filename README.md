@@ -11,13 +11,13 @@
 [![Local-first](https://img.shields.io/badge/local--first-no%20API%20key-brightgreen.svg)](#)
 [![Bun](https://img.shields.io/badge/runtime-bun-orange.svg)](https://bun.sh)
 
-**coderecall** is an MCP server that turns any local repo into a searchable index your AI coding agent can query directly — code *and* the notes, decisions, and patterns you've accumulated about it. It runs entirely on your laptop. No OpenAI key. No Ollama. No vector DB to host. `bun install`, point it at a folder, restart Claude Code.
+**coderecall** is an MCP server that turns any local repo into a searchable index your AI coding agent can query directly — code *and* the notes, decisions, and patterns you've accumulated about it. It runs entirely on your laptop. No OpenAI key. No Ollama. No vector DB to host. Vendor it into your project, run init, restart Claude Code.
 
 - **Confidence-tiered context.** Searches return full content for high-confidence hits, summaries for medium, and metadata-only stubs for the rest — so the model spends tokens where it's confident, not everywhere.
 - **Knows when it's stale.** Every search response embeds a banner the agent can see (`🟡 Index is 17 days old`), so the model can prompt you to reindex instead of silently searching old code.
 - **Code + knowledge in one call.** `add_knowledge("we use SWR not React Query because…")` lives next to your source in the same index, retrieved by the same `search` tool.
 - **6 languages with real parsers** — TypeScript/JavaScript, Python, Go, Rust, Ruby, Elixir — plus a generic fallback. Adding a new one is a single file.
-- **Truly local.** Embeddings run in-process via `Xenova/bge-small-en-v1.5` (384-D, ~30 MB on first run). Index lives in a single `.coderecall/index.db`. Per developer, gitignored — no shared infrastructure.
+- **Truly local.** Embeddings run in-process via `Xenova/bge-small-en-v1.5` (384-D, ~30 MB on first run). Index lives in a single `.coderecall/index.db` — gitignored per developer, vectors never travel through git. The tool itself is vendored at `tools/coderecall/` and committed, so the whole team stays on the same pinned version.
 
 ---
 
@@ -124,14 +124,20 @@ That trade-off is the point: you spend context on results the model is *confiden
 
 ## What `init` does
 
-`coderecall init` looks at your project and writes two files:
+`coderecall init` writes (or updates) three things in your project:
 
 | File | What it is |
 |---|---|
-| `.coderecall.json` | Project config: indexed extensions, ignore globs, embedding model. |
-| `.mcp.json` (or `.cursor/mcp.json` with `--client cursor`) | MCP server entry pointing at this repo's `src/index.ts`, with `CODERECALL_PROJECT_ROOT` set to your project. |
+| `.coderecall.json` | Project config: indexed extensions, ignore globs, embedding model, staleness thresholds. |
+| `.mcp.json` (or `.cursor/mcp.json` with `--client cursor`) | MCP server entry for `coderecall`. Merges next to any existing servers — won't clobber. |
+| `.gitignore` | Appends `.coderecall/` (and `tools/coderecall/node_modules/` for vendored installs). |
 
-It auto-detects the language by scanning for a manifest file (`mix.exs`, `Cargo.toml`, `go.mod`, `pyproject.toml` / `requirements.txt` / `Pipfile`, `Gemfile`, `tsconfig.json`, `package.json`) and picks sensible default extensions. Re-run with `--force` to overwrite, `--no-mcp` to skip the MCP file, or pass a path: `coderecall init /path/to/project`.
+The `.mcp.json` entry adapts to where coderecall lives:
+
+- **Vendored** (the recommended setup — coderecall is inside the project at `tools/coderecall/`): server path is written as a portable relative path (`./tools/coderecall/src/index.ts`) and the `CODERECALL_PROJECT_ROOT` env var is omitted — the server uses the MCP client's launch CWD. The result is fully portable: commit `.mcp.json` and every teammate's setup works without path rewrites.
+- **External** (coderecall lives somewhere outside the project): server path is absolute, and `CODERECALL_PROJECT_ROOT` is set explicitly.
+
+It auto-detects the project language by scanning for a manifest file (`mix.exs`, `Cargo.toml`, `go.mod`, `pyproject.toml` / `requirements.txt` / `Pipfile`, `Gemfile`, `tsconfig.json`, `package.json`) and picks sensible default extensions. Re-run with `--force` to overwrite, `--no-mcp` to skip the MCP file, or pass a path: `coderecall init /path/to/project`.
 
 ---
 
