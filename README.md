@@ -298,6 +298,29 @@ All commands honor `CODERECALL_PROJECT_ROOT`, `CODERECALL_INDEX_PATH`, `CODERECA
 
 The confidence-tiered expansion idea is loosely inspired by recent RAG-decoding research (notably Meta's REFRAG paper on selective chunk expansion), adapted here as a simple retrieval-side scoring heuristic rather than a learned decoder modification.
 
+## Credits
+
+<table>
+  <tr>
+    <td align="center">
+      <a href="https://github.com/jichon">
+        <img src="https://github.com/jichon.png?size=100" width="80" height="80" style="border-radius:50%" alt="@jichon"/><br/>
+        <sub><b>@jichon</b></sub>
+      </a><br/>
+      <sub>Original idea</sub>
+    </td>
+    <td align="center">
+      <a href="https://github.com/FedeMadoery">
+        <img src="https://github.com/FedeMadoery.png?size=100" width="80" height="80" style="border-radius:50%" alt="@FedeMadoery"/><br/>
+        <sub><b>@FedeMadoery</b></sub>
+      </a><br/>
+      <sub>Author &amp; maintainer</sub>
+    </td>
+  </tr>
+</table>
+
+[**@jichon**](https://github.com/jichon) originally conceived the idea this project is based on — he sketched it out for a single use case, and this repo generalizes it into a reusable tool.
+
 ## License
 
 MIT
