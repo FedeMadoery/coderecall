@@ -207,24 +207,13 @@ No file watcher is built in — re-indexing while a tool is reading from the DB 
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────┐
-│  MCP tools — search / add_knowledge / index_files / │
-│  index_diff / get_file_context / get_index_stats    │
-├─────────────────────────────────────────────────────┤
-│  Confidence-tiered retrieval: candidate pool →      │
-│  multi-signal scoring → diversity cap → tiered      │
-│  expansion (full / summary / metadata)              │
-├─────────────────────────────────────────────────────┤
-│  Hybrid search: FTS5 (porter) + cosine 384-D        │
-├─────────────────────────────────────────────────────┤
-│  Indexing: scanner → language-aware parser registry │
-│            → chunker → local embeddings             │
-├─────────────────────────────────────────────────────┤
-│  SQLite: knowledge_entries, code_files, code_chunks,│
-│          embeddings, memory_fts (FTS5)              │
-└─────────────────────────────────────────────────────┘
-```
+| Layer | What it does |
+|---|---|
+| **MCP tools** | search · add_knowledge · index_files · index_diff · get_file_context · get_index_stats |
+| **Confidence-tiered retrieval** | pool → scoring → diversity → tiered expansion |
+| **Hybrid search** | FTS5 (porter) + cosine 384-D |
+| **Indexing** | scanner → parsers → chunker → embeddings |
+| **SQLite** | knowledge_entries · code_files · code_chunks · embeddings · memory_fts |
 
 ### Adding a language
 
