@@ -59,6 +59,7 @@ Init options:
 
 Indexing options:
   --extensions <exts>       Comma-separated file extensions (defaults to config)
+  --no-git-ls               Skip 'git ls-files'; use glob walk instead (pyvenv.cfg detection added for Python projects)
   --base <ref>              Base git ref for diff (default: HEAD~1)
   --head <ref>              Head git ref for diff (default: HEAD)
 
@@ -155,7 +156,8 @@ async function main() {
         console.log(`Indexing ${absolutePath}...`);
         console.log(`Extensions: ${extensions.join(", ")}`);
 
-        const scanner = new FileScanner(absolutePath, { extensions, ignore: config.ignore });
+        const useGit = !parsed.flags["no-git-ls"];
+        const scanner = new FileScanner(absolutePath, { extensions, ignore: config.ignore, useGit });
         const files = await scanner.scanAll();
         console.log(`Found ${files.length} files`);
 

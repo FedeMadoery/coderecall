@@ -151,7 +151,9 @@ The index is **local per developer**. `.coderecall/` is gitignored — vectors a
 coderecall index
 ```
 
-Scans the project, parses every file matching `extensions`, chunks it, embeds each chunk (384-D), and stores everything in `.coderecall/index.db`. The first run also downloads the ~30 MB embedding model. Rough numbers on CPU: ~30–50 ms per chunk; a 5,000-chunk repo finishes its first index in ~4–5 min.
+Scans the project, parses every file matching `extensions`, chunks it, embeds each chunk (384-D, batched), and stores everything in `.coderecall/index.db`. The first run also downloads the ~30 MB embedding model. Rough numbers on CPU: ~15–30 ms per chunk with batched embeddings; a 5,000-chunk repo finishes its first index in ~2–3 min.
+
+**Which files get scanned.** In a git repo, the scanner uses `git ls-files` (tracked + untracked-but-not-gitignored) — so anything in your `.gitignore` is skipped automatically, including weirdly-named Python venvs (`api-venv/`, `my-env-3.11/`, etc.). Outside a git repo, it falls back to a glob walk using the `ignore` patterns in `.coderecall.json`; for Python projects it also detects venvs by their `pyvenv.cfg` marker so the directory name doesn't matter. Pass `--no-git-ls` to force the glob path.
 
 ### Re-indexing is cheap
 
@@ -225,8 +227,8 @@ A new language is **a single file** in `src/indexer/parsers/<lang>.ts` implement
 <summary><strong>CLI reference</strong></summary>
 
 ```bash
-coderecall init [path]                   # plug-and-play setup
-coderecall index [path]                  # full index of project (uses config)
+coderecall init [path] [--language <name>] [--extensions ".ext1,.ext2"] [--force] [--no-mcp]
+coderecall index [path] [--extensions ".ext1,.ext2"] [--no-git-ls]
 coderecall index-diff [path] --base HEAD~1 --head HEAD
 coderecall search "<query>" [--filter code|knowledge] [--limit 10] [--expansion selective|all|metadata_only]
 coderecall search-legacy "<query>"       # full-expansion mode (no tiering)
@@ -236,6 +238,10 @@ coderecall list-knowledge [--category X] [--tag Y]
 coderecall import-obsidian --vault /path/to/vault
 coderecall import-knowledge-file ./NOTES.md --category note
 ```
+
+`init` resolution order for which extensions to index: `--extensions` flag → `--language` preset → auto-detect from manifest → interactive prompt (TTY) → exit with instructions (non-TTY, so an agent can ask you).
+
+Known `--language` presets: `typescript`, `javascript`, `python`, `ruby`, `go`, `rust`, `elixir`, `java`, `kotlin`, `swift`, `csharp`, `cpp`, `php`.
 
 All commands honor `CODERECALL_PROJECT_ROOT`, `CODERECALL_INDEX_PATH`, `CODERECALL_EXTENSIONS`, `CODERECALL_IGNORE`, and `CODERECALL_EMBEDDING_MODEL`.
 
