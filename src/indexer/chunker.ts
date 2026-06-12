@@ -105,26 +105,35 @@ export class CodeChunker {
   }
 
   private async embedChunks(chunks: CodeChunk[]): Promise<void> {
-    for (const chunk of chunks) {
-      const textParts = [chunk.name];
-      if (chunk.signature) textParts.push(chunk.signature);
-      if (chunk.docstring) textParts.push(chunk.docstring);
-      textParts.push(chunk.content);
+    if (chunks.length === 0) return;
 
-      const text = textParts.join("\n").slice(0, 8000);
+    const texts = chunks.map((chunk) => {
+      const parts = [chunk.name];
+      if (chunk.signature) parts.push(chunk.signature);
+      if (chunk.docstring) parts.push(chunk.docstring);
+      parts.push(chunk.content);
+      return parts.join("\n").slice(0, 8000);
+    });
 
-      try {
-        const vector = await this.embeddings.embed(text);
-        this.db.saveEmbedding("code", chunk.id, vector);
-        this.db.indexForFTS(
-          chunk.id,
-          "code",
-          chunk.name,
-          `${chunk.signature || ""} ${chunk.docstring || ""} ${chunk.content}`.slice(0, 10000)
-        );
-      } catch (err) {
-        console.error(`Failed to embed chunk ${chunk.id}:`, err);
-      }
+    let vectors: Float32Array[];
+    try {
+      vectors = await this.embeddings.embedBatch(texts);
+    } catch (err) {
+      console.error(`Failed to embed batch of ${chunks.length} chunks:`, err);
+      return;
+    }
+
+    for (let i = 0; i < chunks.length; i++) {
+      const chunk = chunks[i]!;
+      const vector = vectors[i];
+      if (!vector) continue;
+      this.db.saveEmbedding("code", chunk.id, vector);
+      this.db.indexForFTS(
+        chunk.id,
+        "code",
+        chunk.name,
+        `${chunk.signature || ""} ${chunk.docstring || ""} ${chunk.content}`.slice(0, 10000)
+      );
     }
   }
 

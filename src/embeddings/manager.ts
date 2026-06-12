@@ -34,19 +34,32 @@ export class EmbeddingManager {
     return new Float32Array(output.data as unknown as ArrayLike<number>);
   }
 
-  async embedBatch(texts: string[], batchSize: number = 32): Promise<Float32Array[]> {
+  async embedBatch(texts: string[], batchSize: number = 8): Promise<Float32Array[]> {
     if (!this.model) {
       await this.init();
     }
+
+    if (texts.length === 0) return [];
 
     const results: Float32Array[] = [];
 
     for (let i = 0; i < texts.length; i += batchSize) {
       const batch = texts.slice(i, i + batchSize);
 
-      for (const text of batch) {
-        const embedding = await this.embed(text);
-        results.push(embedding);
+      const output = await this.model!(batch, {
+        pooling: "mean",
+        normalize: true
+      });
+
+      // Batched output shape is [batch, dim]; output.data is a flat Float32Array
+      // of length batch * dim. Slice into per-row Float32Arrays.
+      const flat = output.data as unknown as Float32Array;
+      const dim = Array.isArray(output.dims) && output.dims.length >= 2
+        ? (output.dims[output.dims.length - 1] as number)
+        : flat.length / batch.length;
+
+      for (let j = 0; j < batch.length; j++) {
+        results.push(new Float32Array(flat.slice(j * dim, (j + 1) * dim)));
       }
     }
 
