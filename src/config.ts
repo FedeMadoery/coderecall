@@ -93,11 +93,30 @@ export function loadConfig(projectRoot: string = process.cwd()): CoderecallConfi
   return merged;
 }
 
-/** Detect the dominant language by scanning for well-known manifest files. */
-export function detectLanguage(projectRoot: string): {
+export interface LanguagePreset {
   language: string;
   extensions: string[];
-} | null {
+}
+
+/** Known language presets, keyed by language name for --language lookup. */
+export const LANGUAGE_PRESETS: Record<string, LanguagePreset> = {
+  typescript: { language: "typescript", extensions: [".ts", ".tsx"] },
+  javascript: { language: "javascript", extensions: [".ts", ".tsx", ".js", ".jsx"] },
+  python: { language: "python", extensions: [".py"] },
+  ruby: { language: "ruby", extensions: [".rb"] },
+  go: { language: "go", extensions: [".go"] },
+  rust: { language: "rust", extensions: [".rs"] },
+  elixir: { language: "elixir", extensions: [".ex", ".exs"] },
+  java: { language: "java", extensions: [".java"] },
+  kotlin: { language: "kotlin", extensions: [".kt", ".kts"] },
+  swift: { language: "swift", extensions: [".swift"] },
+  csharp: { language: "csharp", extensions: [".cs"] },
+  cpp: { language: "cpp", extensions: [".c", ".cc", ".cpp", ".h", ".hpp"] },
+  php: { language: "php", extensions: [".php"] }
+};
+
+/** Detect the dominant language by scanning for well-known manifest files. */
+export function detectLanguage(projectRoot: string): LanguagePreset | null {
   const checks: Array<{ file: string; language: string; extensions: string[] }> = [
     { file: "mix.exs", language: "elixir", extensions: [".ex", ".exs"] },
     { file: "Cargo.toml", language: "rust", extensions: [".rs"] },
@@ -117,4 +136,13 @@ export function detectLanguage(projectRoot: string): {
   }
 
   return null;
+}
+
+/** Normalize a comma-separated extension list ("py,.rb" → [".py", ".rb"]). */
+export function parseExtensions(raw: string): string[] {
+  return raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((s) => (s.startsWith(".") ? s : "." + s));
 }

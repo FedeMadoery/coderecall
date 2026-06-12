@@ -137,7 +137,7 @@ The `.mcp.json` entry adapts to where coderecall lives:
 - **Vendored** (the recommended setup — coderecall is inside the project at `tools/coderecall/`): server path is written as a portable relative path (`./tools/coderecall/src/index.ts`) and the `CODERECALL_PROJECT_ROOT` env var is omitted — the server uses the MCP client's launch CWD. The result is fully portable: commit `.mcp.json` and every teammate's setup works without path rewrites.
 - **External** (coderecall lives somewhere outside the project): server path is absolute, and `CODERECALL_PROJECT_ROOT` is set explicitly.
 
-It auto-detects the project language by scanning for a manifest file (`mix.exs`, `Cargo.toml`, `go.mod`, `pyproject.toml` / `requirements.txt` / `Pipfile`, `Gemfile`, `tsconfig.json`, `package.json`) and picks sensible default extensions. Re-run with `--force` to overwrite, `--no-mcp` to skip the MCP file, or pass a path: `coderecall init /path/to/project`.
+It auto-detects the project language by scanning for a manifest file (`mix.exs`, `Cargo.toml`, `go.mod`, `pyproject.toml` / `requirements.txt` / `Pipfile`, `Gemfile`, `tsconfig.json`, `package.json`) and picks sensible default extensions. If no manifest is found, `init` will prompt interactively for a language; in non-interactive runs (agents, CI) it exits non-zero with a list of known languages so the agent can ask you, then re-run with `--language <name>` or `--extensions ".ext1,.ext2"`. Both flags also override auto-detection — useful for polyglot repos (e.g. a Python service with a `package.json` for tooling). Re-run with `--force` to overwrite, `--no-mcp` to skip the MCP file, or pass a path: `coderecall init /path/to/project`.
 
 ---
 

@@ -6,7 +6,15 @@ import { CodeChunker } from "../src/indexer/chunker";
 import { FileScanner } from "../src/indexer/scanner";
 import { ObsidianImporter } from "../src/indexer/obsidian";
 import { MarkdownImporter } from "../src/indexer/markdown";
-import { loadConfig, detectLanguage, DEFAULT_IGNORE, DEFAULTS } from "../src/config";
+import {
+  loadConfig,
+  detectLanguage,
+  DEFAULT_IGNORE,
+  DEFAULTS,
+  LANGUAGE_PRESETS,
+  parseExtensions
+} from "../src/config";
+import type { LanguagePreset } from "../src/config";
 
 import type { ExpansionMode, IndexFreshness } from "../src/types";
 import { join, resolve, isAbsolute, dirname, relative, sep } from "path";
@@ -45,6 +53,9 @@ Init options:
   --client <name>           Target MCP client (claude-code, cursor, generic). Default: claude-code
   --no-mcp                  Don't write .mcp.json
   --no-config               Don't write .coderecall.json
+  --language <name>         Language preset (typescript, javascript, python, ruby, go, rust,
+                            elixir, java, kotlin, swift, csharp, cpp, php). Overrides auto-detection.
+  --extensions <exts>       Comma-separated extensions (e.g. ".py,.pyx"). Overrides auto-detection.
 
 Indexing options:
   --extensions <exts>       Comma-separated file extensions (defaults to config)
@@ -338,12 +349,21 @@ async function runInit(parsed: ParsedOptions) {
 
   console.log(`Initializing coderecall in: ${targetRoot}\n`);
 
+  const flagLanguage = typeof parsed.flags["language"] === "string" ? (parsed.flags["language"] as string).toLowerCase() : null;
+  const flagExtensions = typeof parsed.flags["extensions"] === "string" ? (parsed.flags["extensions"] as string) : null;
+
   const detected = detectLanguage(targetRoot);
-  if (detected) {
-    console.log(`Detected language: ${detected.language}`);
-    console.log(`Extensions: ${detected.extensions.join(", ")}\n`);
+  const chosen = await resolveLanguageChoice({ detected, flagLanguage, flagExtensions });
+
+  if (chosen.source === "flag") {
+    console.log(`Using ${chosen.language ? `language: ${chosen.language}` : "explicit extensions"}`);
+    console.log(`Extensions: ${chosen.extensions.join(", ")}\n`);
+  } else if (chosen.source === "detected") {
+    console.log(`Detected language: ${chosen.language}`);
+    console.log(`Extensions: ${chosen.extensions.join(", ")}\n`);
   } else {
-    console.log(`No known manifest found. Falling back to defaults (${DEFAULTS.extensions.join(", ")}).\n`);
+    console.log(`Selected language: ${chosen.language ?? "custom"}`);
+    console.log(`Extensions: ${chosen.extensions.join(", ")}\n`);
   }
 
   const force = !!parsed.flags["force"];
@@ -359,12 +379,12 @@ async function runInit(parsed: ParsedOptions) {
     } else {
       const cfg = {
         indexPath: ".coderecall",
-        extensions: detected?.extensions ?? DEFAULTS.extensions,
+        extensions: chosen.extensions,
         ignore: DEFAULT_IGNORE,
         embeddingModel: DEFAULTS.embeddingModel,
         staleAfterDays: DEFAULTS.staleAfterDays,
         veryStaleAfterDays: DEFAULTS.veryStaleAfterDays,
-        ...(detected ? { language: detected.language } : {})
+        ...(chosen.language ? { language: chosen.language } : {})
       };
       writeFileSync(configPath, JSON.stringify(cfg, null, 2) + "\n");
       console.log(`Wrote ${configPath}`);
@@ -454,6 +474,97 @@ Next steps:
   3. Restart your MCP client (Claude Code, Cursor, etc.) — the 'coderecall' tools will appear.
   4. (Optional) Add a CLAUDE.md note telling the agent to use mcp__coderecall__search before reading files.
 `);
+}
+
+interface LanguageChoice {
+  language: string | null;
+  extensions: string[];
+  source: "flag" | "detected" | "prompt";
+}
+
+async function resolveLanguageChoice(opts: {
+  detected: LanguagePreset | null;
+  flagLanguage: string | null;
+  flagExtensions: string | null;
+}): Promise<LanguageChoice> {
+  // 1. Explicit flags always win, even over auto-detection.
+  if (opts.flagExtensions) {
+    return {
+      language: opts.flagLanguage ?? null,
+      extensions: parseExtensions(opts.flagExtensions),
+      source: "flag"
+    };
+  }
+  if (opts.flagLanguage) {
+    const preset = LANGUAGE_PRESETS[opts.flagLanguage];
+    if (!preset) {
+      console.error(
+        `Unknown --language "${opts.flagLanguage}". Known: ${Object.keys(LANGUAGE_PRESETS).join(", ")}.`
+      );
+      console.error(`Or pass extensions directly: --extensions ".foo,.bar"`);
+      process.exit(1);
+    }
+    return { language: preset.language, extensions: preset.extensions, source: "flag" };
+  }
+
+  // 2. Manifest detection.
+  if (opts.detected) {
+    return { language: opts.detected.language, extensions: opts.detected.extensions, source: "detected" };
+  }
+
+  // 3. No manifest, no flags — ask interactively, or instruct the agent to ask.
+  if (process.stdin.isTTY) {
+    return await promptForLanguage();
+  }
+
+  console.error(`No language manifest found in this project (e.g. package.json, Cargo.toml, pyproject.toml).`);
+  console.error(`coderecall needs to know which file extensions to index.`);
+  console.error(``);
+  console.error(`Ask the user which language(s) they want indexed, then re-run with one of:`);
+  console.error(`  coderecall init --language <name>`);
+  console.error(`  coderecall init --extensions ".ext1,.ext2"`);
+  console.error(``);
+  console.error(`Known languages: ${Object.keys(LANGUAGE_PRESETS).join(", ")}`);
+  process.exit(2);
+}
+
+async function promptForLanguage(): Promise<LanguageChoice> {
+  const readline = await import("readline");
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  const question = (p: string): Promise<string> => new Promise((res) => rl.question(p, res));
+
+  const names = Object.keys(LANGUAGE_PRESETS);
+  console.log(`No language manifest found in this project.`);
+  console.log(`Pick a language to index, or enter custom extensions:\n`);
+  names.forEach((name, i) => {
+    const preset = LANGUAGE_PRESETS[name]!;
+    console.log(`  ${(i + 1).toString().padStart(2)}) ${name.padEnd(12)} ${preset.extensions.join(", ")}`);
+  });
+  console.log(`  ${(names.length + 1).toString().padStart(2)}) custom       (enter extensions manually)\n`);
+
+  const answer = (await question(`Choice [1-${names.length + 1}]: `)).trim();
+  const n = parseInt(answer, 10);
+
+  if (!isNaN(n) && n >= 1 && n <= names.length) {
+    rl.close();
+    const preset = LANGUAGE_PRESETS[names[n - 1]!]!;
+    return { language: preset.language, extensions: preset.extensions, source: "prompt" };
+  }
+
+  if (!isNaN(n) && n === names.length + 1) {
+    const raw = (await question(`Extensions (comma-separated, e.g. ".py,.pyx"): `)).trim();
+    rl.close();
+    const exts = parseExtensions(raw);
+    if (exts.length === 0) {
+      console.error(`No extensions provided. Aborting.`);
+      process.exit(1);
+    }
+    return { language: null, extensions: exts, source: "prompt" };
+  }
+
+  rl.close();
+  console.error(`Invalid choice: "${answer}". Aborting.`);
+  process.exit(1);
 }
 
 function freshnessLine(f: IndexFreshness): string {
