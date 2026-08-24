@@ -6,7 +6,7 @@ things being measured change.
 
 | # | Workstream | Why now | Est. |
 |---|---|---|---|
-| 0 | Retrieval eval harness | Prerequisite: nothing below is verifiable without it | 0.5 d |
+| 0 | Retrieval eval harness | ✅ **DONE** — 32 labelled queries, baseline recorded | shipped |
 | 5 | Deletion/rename pruning in full `index` | ✅ **DONE** — 16% → 0% phantom results | shipped |
 | 1 | Code-aware embedding model | Biggest quality lever; must be measured, not assumed | 1.5–2 d |
 | 2 | Intent routing + tier recalibration | Recalibration must follow the model swap | 2–3 d |
@@ -92,6 +92,38 @@ baseline describes code that no longer exists here.
 ---
 
 ## Phase 0 — Retrieval eval harness (prerequisite)
+
+> **Status: shipped 2026-08-24.** `tests/eval/run.ts` (+ `bun run eval`), 32
+> hand-labelled queries pinned to a corpus SHA, ground truth read from the
+> corpus source rather than from coderecall's own output. Metrics: hit@10,
+> recall@10, MRR, P@1, full-precision, false-confidence, and a negatives check.
+>
+> **Baseline (bge-small-en-v1.5, 2,301 code chunks + 78 knowledge entries):**
+>
+> | kind | n | hit@10 | recall@10 | MRR | P@1 | full precision |
+> |---|---|---|---|---|---|---|
+> | definition | 12 | 100.0% | 100.0% | 0.825 | 75.0% | 47.4% |
+> | knowledge | 8 | 100.0% | 81.3% | 0.742 | 62.5% | 25.0% |
+> | topic | 10 | 100.0% | 75.0% | 0.764 | 60.0% | 37.2% |
+> | **overall** | **30** | **100.0%** | **86.7%** | **0.783** | **66.7%** | **36.0%** |
+>
+> false confidence 0/30; negatives 0/2 expanded — both clean.
+>
+> Two things this immediately tells us, and one caveat:
+>
+> - **`full precision` is 36%.** Nearly two thirds of the results that get
+>   expanded to full content are not answers to the question. The tiering
+>   feature is spending most of its context budget on wrong results — a much
+>   sharper statement of the Finding B calibration problem than the score
+>   distribution alone, and the metric Phase 2 should be judged on.
+> - **Symbol lookup is already strong** (definition recall 100%, MRR 0.825), so
+>   Phase 2's `definition` fast path is about precision at rank 1 (75%) and
+>   tier assignment, not about finding the symbol at all.
+> - **Caveat: `hit@10` is saturated at 100%** and cannot show improvement. It is
+>   a regression detector only. Judge Phases 1 and 2 on recall@10, MRR, P@1, and
+>   above all full precision. If a later change needs more headroom, tighten the
+>   ground truth (require `::name` on topic queries) rather than reading a
+>   ceiling as success.
 
 Without this, items 1 and 2 are vibes. Both change ranking behaviour, and both
 claims ("code embeddings are better", "these thresholds are right") are only

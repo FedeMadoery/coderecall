@@ -16,6 +16,7 @@
     "search": "bun run scripts/cli.ts search",
     "stats": "bun run scripts/cli.ts stats",
     "test": "bun test",
+    "eval": "bun run tests/eval/run.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },

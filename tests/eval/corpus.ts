@@ -45,6 +45,11 @@ export function loadQueries(): EvalQuery[] {
   return queries;
 }
 
+/** The corpus commit the ground truth was labelled against, if pinned. */
+export function corpusSha(): string | null {
+  return readQueriesFile().corpus?.sha ?? null;
+}
+
 /** Corpus repo root: CODERECALL_EVAL_CORPUS wins, else `corpus.root` from queries.json. */
 export function corpusRoot(): string {
   const fromEnv = process.env.CODERECALL_EVAL_CORPUS;
