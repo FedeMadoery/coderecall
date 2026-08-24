@@ -6,9 +6,7 @@ import { loadConfig } from "./config";
 const projectRoot = resolve(process.env.CODERECALL_PROJECT_ROOT || process.cwd());
 const config = loadConfig(projectRoot);
 
-const indexPath = isAbsolute(config.indexPath)
-  ? config.indexPath
-  : join(projectRoot, config.indexPath);
+const indexPath = isAbsolute(config.indexPath) ? config.indexPath : join(projectRoot, config.indexPath);
 
 const dbPath = join(indexPath, "index.db");
 

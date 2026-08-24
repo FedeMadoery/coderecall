@@ -1,11 +1,23 @@
 /**
  * Selection Policy Module
  *
- * Implements confidence-tiered expansion based on multi-signal scoring:
- * candidates are scored, deduplicated for diversity, and each is tagged
- * with a confidence band (high/medium/low) that determines whether it is
- * returned as full content, summary, or metadata-only.
+ * Scores candidates, selects them with a live diversity constraint, and tags
+ * each with a confidence band that decides whether it comes back as full
+ * content, a summary, or metadata only.
+ *
+ * Scoring is `vector * vw + keyword * kw - diversity`, with the two weights
+ * summing to 1 so a score reads as a confidence in [0, 1].
+ *
+ * Recency is deliberately absent. It used to contribute up to 0.2, but only
+ * knowledge entries had a usable timestamp; code chunks fell through to a
+ * hardcoded 0.5 default and took a flat +0.1 regardless of age. The result was
+ * not a recency signal at all, just a standing bonus for knowledge entries —
+ * which is why they won the top slot on code-shaped queries. `code_files
+ * .indexed_at` cannot replace it either: it records when indexing ran, so it
+ * is identical for every file in a full reindex.
  */
+import type { RetrievalProfile } from "./profiles";
+import { TOPIC_PROFILE } from "./profiles";
 
 export interface SelectionCandidate {
   source_id: string;
@@ -14,7 +26,6 @@ export interface SelectionCandidate {
   keywordScore: number;
   filepath?: string;
   title?: string;
-  updatedAt?: string;
 }
 
 export interface ScoredCandidate extends SelectionCandidate {
@@ -23,212 +34,95 @@ export interface ScoredCandidate extends SelectionCandidate {
   expansion: "full" | "summary" | "metadata";
 }
 
-export interface SelectionConfig {
-  // Weight factors for scoring
-  vectorWeight: number;
-  keywordWeight: number;
-  recencyWeight: number;
-  diversityPenalty: number;
-
-  // Thresholds for expansion levels
-  fullExpansionThreshold: number;
-  summaryExpansionThreshold: number;
-
-  // Diversity constraints
-  maxResultsPerFile: number;
-}
-
-const DEFAULT_CONFIG: SelectionConfig = {
-  vectorWeight: 0.5,
-  keywordWeight: 0.3,
-  recencyWeight: 0.2,
-  diversityPenalty: 0.15,
-
-  fullExpansionThreshold: 0.7,
-  summaryExpansionThreshold: 0.4,
-
-  maxResultsPerFile: 3
-};
-
 export class SelectionPolicy {
-  private config: SelectionConfig;
+  private profile: RetrievalProfile;
 
-  constructor(config: Partial<SelectionConfig> = {}) {
-    this.config = { ...DEFAULT_CONFIG, ...config };
+  constructor(profile: RetrievalProfile = TOPIC_PROFILE) {
+    this.profile = profile;
+  }
+
+  getProfile(): RetrievalProfile {
+    return this.profile;
+  }
+
+  /** Group key for diversity: the file for code, the entry itself for knowledge. */
+  private groupKey(candidate: SelectionCandidate): string {
+    return candidate.filepath || candidate.title || "unknown";
   }
 
   /**
-   * Score a candidate using multiple signals
+   * Base relevance, before any diversity adjustment.
    */
-  score(candidate: SelectionCandidate, seenFilepaths: Map<string, number>): number {
-    const { vectorWeight, keywordWeight, recencyWeight, diversityPenalty } = this.config;
-
-    // Base score from vector and keyword similarity
-    const baseScore = candidate.vectorScore * vectorWeight + candidate.keywordScore * keywordWeight;
-
-    // Recency boost (if available)
-    const recencyBoost = this.calculateRecencyBoost(candidate.updatedAt) * recencyWeight;
-
-    // Diversity penalty for clustering
-    const filepath = candidate.filepath || candidate.title || "unknown";
-    const fileCount = seenFilepaths.get(filepath) || 0;
-    const diversityPenaltyValue = fileCount * diversityPenalty;
-
-    return Math.max(0, baseScore + recencyBoost - diversityPenaltyValue);
+  baseScore(candidate: SelectionCandidate): number {
+    const { vectorWeight, keywordWeight } = this.profile;
+    return candidate.vectorScore * vectorWeight + candidate.keywordScore * keywordWeight;
   }
 
   /**
-   * Calculate recency boost based on last update time
-   * Returns 0-1 where 1 = updated within last day
+   * Relevance with the diversity penalty for what has already been picked.
    */
-  private calculateRecencyBoost(updatedAt?: string): number {
-    if (!updatedAt) return 0.5; // Default boost for unknown
-
-    try {
-      const updated = new Date(updatedAt);
-      const now = new Date();
-      const daysSinceUpdate = (now.getTime() - updated.getTime()) / (1000 * 60 * 60 * 24);
-
-      // Exponential decay: recent updates get higher boost
-      // 0 days = 1.0, 7 days = 0.5, 30 days = 0.2, 90+ days = ~0
-      return Math.exp(-daysSinceUpdate / 30);
-    } catch {
-      return 0.5;
-    }
+  score(candidate: SelectionCandidate, seenGroups: Map<string, number>): number {
+    const alreadyPicked = seenGroups.get(this.groupKey(candidate)) || 0;
+    return Math.max(0, this.baseScore(candidate) - alreadyPicked * this.profile.diversityPenalty);
   }
 
-  /**
-   * Determine expansion level based on score
-   */
   getExpansionLevel(score: number): "full" | "summary" | "metadata" {
-    if (score >= this.config.fullExpansionThreshold) {
-      return "full";
-    } else if (score >= this.config.summaryExpansionThreshold) {
-      return "summary";
-    }
+    if (score >= this.profile.fullExpansionThreshold) return "full";
+    if (score >= this.profile.summaryExpansionThreshold) return "summary";
     return "metadata";
   }
 
-  /**
-   * Determine confidence level based on score
-   */
   getConfidence(score: number): "high" | "medium" | "low" {
-    if (score >= 0.7) return "high";
-    if (score >= 0.4) return "medium";
+    if (score >= this.profile.fullExpansionThreshold) return "high";
+    if (score >= this.profile.summaryExpansionThreshold) return "medium";
     return "low";
   }
 
   /**
-   * Select top-N candidates with diversity constraints
+   * Greedily select the best remaining candidate, then re-score the rest.
+   *
+   * The re-scoring is the point: the previous implementation scored every
+   * candidate up front, while the map tracking per-file counts was still empty,
+   * so the diversity penalty was always multiplied by zero and the setting did
+   * nothing. Diversity came solely from the hard per-file cap. Selecting
+   * incrementally makes the penalty real — a second chunk from an
+   * already-represented file now has to actually outscore a fresh file.
    */
   selectWithDiversity(candidates: SelectionCandidate[], limit: number): ScoredCandidate[] {
-    const seenFilepaths = new Map<string, number>();
+    const seenGroups = new Map<string, number>();
     const selected: ScoredCandidate[] = [];
+    const remaining = [...candidates];
 
-    // Score all candidates
-    const scored = candidates.map((candidate) => ({
-      ...candidate,
-      finalScore: this.score(candidate, seenFilepaths)
-    }));
+    while (selected.length < limit && remaining.length > 0) {
+      let bestIndex = -1;
+      let bestScore = -Infinity;
 
-    // Sort by score descending
-    scored.sort((a, b) => b.finalScore - a.finalScore);
+      for (let i = 0; i < remaining.length; i++) {
+        const candidate = remaining[i]!;
+        const key = this.groupKey(candidate);
+        if ((seenGroups.get(key) || 0) >= this.profile.maxResultsPerFile) continue;
 
-    // Select with diversity constraint
-    for (const candidate of scored) {
-      const filepath = candidate.filepath || candidate.title || "unknown";
-      const fileCount = seenFilepaths.get(filepath) || 0;
-
-      // Check diversity constraint
-      if (fileCount >= this.config.maxResultsPerFile) {
-        // Re-score with penalty already applied, skip if too many from same file
-        continue;
+        const score = this.score(candidate, seenGroups);
+        if (score > bestScore) {
+          bestScore = score;
+          bestIndex = i;
+        }
       }
 
-      // Add to selection
-      const confidence = this.getConfidence(candidate.finalScore);
-      const expansion = this.getExpansionLevel(candidate.finalScore);
+      if (bestIndex === -1) break; // everything left is capped out
+
+      const [winner] = remaining.splice(bestIndex, 1) as [SelectionCandidate];
+      const key = this.groupKey(winner);
+      seenGroups.set(key, (seenGroups.get(key) || 0) + 1);
 
       selected.push({
-        ...candidate,
-        confidence,
-        expansion
+        ...winner,
+        finalScore: bestScore,
+        confidence: this.getConfidence(bestScore),
+        expansion: this.getExpansionLevel(bestScore)
       });
-
-      // Track filepath count
-      seenFilepaths.set(filepath, fileCount + 1);
-
-      if (selected.length >= limit) break;
     }
 
     return selected;
-  }
-
-  /**
-   * Re-rank candidates after initial selection
-   * Useful for adjusting based on query context
-   */
-  rerank(
-    candidates: ScoredCandidate[],
-    queryContext: { isCodeQuery: boolean; isArchitectureQuery: boolean }
-  ): ScoredCandidate[] {
-    return candidates.map((candidate) => {
-      let boost = 0;
-
-      // Boost code results for code-related queries
-      if (queryContext.isCodeQuery && candidate.source_type === "code") {
-        boost += 0.1;
-      }
-
-      // Boost knowledge results for architecture queries
-      if (queryContext.isArchitectureQuery && candidate.source_type === "knowledge") {
-        boost += 0.1;
-      }
-
-      const newScore = Math.min(1, candidate.finalScore + boost);
-
-      return {
-        ...candidate,
-        finalScore: newScore,
-        confidence: this.getConfidence(newScore),
-        expansion: this.getExpansionLevel(newScore)
-      };
-    });
-  }
-
-  /**
-   * Detect query context for re-ranking
-   */
-  detectQueryContext(query: string): { isCodeQuery: boolean; isArchitectureQuery: boolean } {
-    const lowerQuery = query.toLowerCase();
-
-    const codePatterns = [
-      /\bfunction\b/,
-      /\bdef\b/,
-      /\bmodule\b/,
-      /\bimpl/,
-      /\bcode\b/,
-      /\bhow\s+(?:does|do|is)\b.*\bwork/,
-      /\bcall/,
-      /\breturn/,
-      /\bparameter/,
-      /\bargument/
-    ];
-
-    const architecturePatterns = [
-      /\barchitecture\b/,
-      /\bdesign\b/,
-      /\bpattern\b/,
-      /\bwhy\b/,
-      /\bdecision\b/,
-      /\bapproach\b/,
-      /\bstructure\b/,
-      /\boverview\b/
-    ];
-
-    const isCodeQuery = codePatterns.some((p) => p.test(lowerQuery));
-    const isArchitectureQuery = architecturePatterns.some((p) => p.test(lowerQuery));
-
-    return { isCodeQuery, isArchitectureQuery };
   }
 }

@@ -144,7 +144,10 @@ export class RulesImporter {
     let processedContent = content;
     processedContent = processedContent.replace(/<!--\s*usage-rules-start\s*-->/, "");
     processedContent = processedContent.replace(/<!--\s*usage-rules-end\s*-->/, "");
-    processedContent = processedContent.replace(/<!--\s*usage-rules-header\s*-->[\s\S]*?<!--\s*usage-rules-header-end\s*-->/, "");
+    processedContent = processedContent.replace(
+      /<!--\s*usage-rules-header\s*-->[\s\S]*?<!--\s*usage-rules-header-end\s*-->/,
+      ""
+    );
 
     // Match <!-- name-start --> ... <!-- name-end --> patterns
     const sectionRegex = /<!--\s*(\S+)-start\s*-->([\s\S]*?)<!--\s*\1-end\s*-->/g;
@@ -262,7 +265,7 @@ export class RulesImporter {
 
   private async importSection(section: RulesSection): Promise<void> {
     // Delete existing entry with same title (for updates)
-    const existing = this.db.listKnowledge().find((k) => k.title === section.title);
+    const existing = this.db.getKnowledgeByTitle(section.title);
     if (existing) {
       this.db.deleteKnowledge(existing.id);
     }
@@ -281,7 +284,7 @@ export class RulesImporter {
     // Generate embedding
     const textForEmbedding = `${section.title}\n\n${section.content.slice(0, 8000)}`;
     const vector = await this.embeddings.embed(textForEmbedding);
-    this.db.saveEmbedding("knowledge", entry.id, vector);
+    this.db.saveEmbedding("knowledge", entry.id, vector, this.embeddings.getModelName());
 
     // Index for FTS
     this.db.indexForFTS(entry.id, "knowledge", section.title, section.content);

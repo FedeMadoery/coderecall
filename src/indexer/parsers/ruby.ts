@@ -70,7 +70,10 @@ function findEnd(lines: string[], startLine: number): number {
   let started = false;
   for (let i = startLine; i < lines.length; i++) {
     const line = lines[i]?.trim() ?? "";
-    if (/^(class|module|def|do|if|unless|while|until|case|begin)\b/.test(line) || /\bdo\s*(\|[^|]*\|)?\s*$/.test(line)) {
+    if (
+      /^(class|module|def|do|if|unless|while|until|case|begin)\b/.test(line) ||
+      /\bdo\s*(\|[^|]*\|)?\s*$/.test(line)
+    ) {
       depth++;
       started = true;
     }

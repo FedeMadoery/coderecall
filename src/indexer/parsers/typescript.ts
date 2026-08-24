@@ -62,9 +62,7 @@ export class TypeScriptParser implements LanguageParser {
       const closeCount = (raw.match(/}/g) || []).length;
 
       // class declaration
-      const classMatch = line.match(
-        /^(?:export\s+(?:default\s+)?|default\s+)?(?:abstract\s+)?class\s+(\w+)/
-      );
+      const classMatch = line.match(/^(?:export\s+(?:default\s+)?|default\s+)?(?:abstract\s+)?class\s+(\w+)/);
       if (classMatch && classMatch[1]) {
         const name = classMatch[1];
         const end = findBraceEnd(lines, i);
@@ -107,14 +105,18 @@ export class TypeScriptParser implements LanguageParser {
       // top-level / method function declarations
       // Patterns: function foo(...), async function foo(...), public foo(...), private foo(...), foo(...) {
       const funcMatch =
-        line.match(
-          /^(?:export\s+(?:default\s+)?|default\s+)?(?:async\s+)?function\*?\s+(\w+)\s*\(/
-        ) ||
-        (currentClass
-          ? line.match(/^(?:public|private|protected|static|async|\s)*\s*(\w+)\s*\([^)]*\)\s*[:{]/)
-          : null);
+        line.match(/^(?:export\s+(?:default\s+)?|default\s+)?(?:async\s+)?function\*?\s+(\w+)\s*\(/) ||
+        (currentClass ? line.match(/^(?:public|private|protected|static|async|\s)*\s*(\w+)\s*\([^)]*\)\s*[:{]/) : null);
 
-      if (funcMatch && funcMatch[1] && funcMatch[1] !== "if" && funcMatch[1] !== "for" && funcMatch[1] !== "while" && funcMatch[1] !== "switch" && funcMatch[1] !== "catch") {
+      if (
+        funcMatch &&
+        funcMatch[1] &&
+        funcMatch[1] !== "if" &&
+        funcMatch[1] !== "for" &&
+        funcMatch[1] !== "while" &&
+        funcMatch[1] !== "switch" &&
+        funcMatch[1] !== "catch"
+      ) {
         const name = funcMatch[1];
         const end = findBraceEnd(lines, i);
         const isMethod = currentClass !== null && braceDepth >= classBraceDepth;

@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS embeddings (
   source_type TEXT CHECK(source_type IN ('code', 'knowledge')),
   source_id TEXT NOT NULL,
   vector BLOB NOT NULL,
-  model TEXT DEFAULT 'Xenova/bge-small-en-v1.5'
+  model TEXT
 );
 
 -- Full-text search (unified)
@@ -68,6 +68,7 @@ CREATE INDEX IF NOT EXISTS idx_code_chunks_file ON code_chunks(file_id);
 CREATE INDEX IF NOT EXISTS idx_code_chunks_parent ON code_chunks(parent_id);
 CREATE INDEX IF NOT EXISTS idx_embeddings_source ON embeddings(source_type, source_id);
 CREATE INDEX IF NOT EXISTS idx_code_files_path ON code_files(filepath);
+CREATE INDEX IF NOT EXISTS idx_knowledge_title ON knowledge_entries(title);
 `;
 
 export const DROP_SCHEMA = `

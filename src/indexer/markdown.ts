@@ -251,10 +251,7 @@ export class MarkdownImporter {
   /**
    * Determine category from path structure or frontmatter
    */
-  determineCategory(
-    relativePath: string,
-    frontmatter: MarkdownFrontmatter
-  ): KnowledgeCategory {
+  determineCategory(relativePath: string, frontmatter: MarkdownFrontmatter): KnowledgeCategory {
     // Check frontmatter first
     const fmCategory = frontmatter.category;
     if (fmCategory && ["architecture", "decision", "pattern", "note", "troubleshooting"].includes(String(fmCategory))) {
@@ -329,7 +326,7 @@ export class MarkdownImporter {
    */
   async saveToDatabase(file: MarkdownFile): Promise<void> {
     // Delete existing entry with same title (for updates)
-    const existing = this.db.listKnowledge().find((k) => k.title === file.title);
+    const existing = this.db.getKnowledgeByTitle(file.title);
     if (existing) {
       this.db.deleteKnowledge(existing.id);
     }
@@ -348,7 +345,7 @@ export class MarkdownImporter {
     // Generate embedding
     const textForEmbedding = `${file.title}\n\n${file.content.slice(0, 8000)}`; // Limit for embedding
     const vector = await this.embeddings.embed(textForEmbedding);
-    this.db.saveEmbedding("knowledge", entry.id, vector);
+    this.db.saveEmbedding("knowledge", entry.id, vector, this.embeddings.getModelName());
 
     // Index for FTS
     this.db.indexForFTS(entry.id, "knowledge", file.title, file.content);

@@ -6,17 +6,12 @@ import { CodeChunker } from "../src/indexer/chunker";
 import { FileScanner } from "../src/indexer/scanner";
 import { ObsidianImporter } from "../src/indexer/obsidian";
 import { MarkdownImporter } from "../src/indexer/markdown";
-import {
-  loadConfig,
-  detectLanguage,
-  DEFAULT_IGNORE,
-  DEFAULTS,
-  LANGUAGE_PRESETS,
-  parseExtensions
-} from "../src/config";
+import { loadConfig, detectLanguage, DEFAULT_IGNORE, DEFAULTS, LANGUAGE_PRESETS, parseExtensions } from "../src/config";
 import type { LanguagePreset } from "../src/config";
 
 import type { ExpansionMode, IndexFreshness } from "../src/types";
+import type { SearchType } from "../src/search/profiles";
+import { GitHistory, type CommitSummary, type HistoryResult } from "../src/git/history";
 import { join, resolve, isAbsolute, dirname, relative, sep } from "path";
 import { mkdirSync, existsSync, readFileSync, writeFileSync, statSync } from "fs";
 import { fileURLToPath } from "url";
@@ -42,6 +37,7 @@ Commands:
   index-diff [path]         Index only changed files (git diff)
   search <query>            Search the index (confidence-tiered expansion)
   search-legacy <query>     Search with full expansion (no tiering)
+  history <arg>             Search git history (no index needed; see History options)
   stats                     Show index statistics
   add-knowledge             Add a knowledge entry (interactive)
   import-obsidian --vault <path>      Import knowledge from an Obsidian vault
@@ -57,22 +53,37 @@ Init options:
                             elixir, java, kotlin, swift, csharp, cpp, php). Overrides auto-detection.
   --extensions <exts>       Comma-separated extensions (e.g. ".py,.pyx"). Overrides auto-detection.
 
+Global options:
+  --db <path>               Use a specific index file or directory instead of the one from config.
+                            Handy for evaluating a copy without touching your working index.
+
 Indexing options:
   --extensions <exts>       Comma-separated file extensions (defaults to config)
   --no-git-ls               Skip 'git ls-files'; use glob walk instead (pyvenv.cfg detection added for Python projects)
+  --no-prune                Keep index entries for files that no longer exist. A full-project 'index'
+                            prunes deleted/renamed files by default; scoped scans never prune.
   --base <ref>              Base git ref for diff (default: HEAD~1)
   --head <ref>              Head git ref for diff (default: HEAD)
+
+History options:
+  --mode <mode>             commits | file_history | blame | commit_detail  (default: commits)
+  --from <n> / --to <m>     Line range, for --mode blame
+  --limit <n>               Max entries (default 20, max 100)
 
 Search options:
   --filter <type>           all | code | knowledge
   --limit <n>               Limit results (default: 10)
   --expansion <mode>        selective | all | metadata_only
+  --search-type <type>      auto | definition | topic  (auto infers from the query shape)
 
 Examples:
   coderecall init                          # plug-and-play setup in current project
   coderecall index                         # uses extensions from .coderecall.json
   coderecall index ./src --extensions .py
   coderecall search "how does auth work"
+  coderecall history "fix login"                          # search commit messages
+  coderecall history src/auth.ts --mode file_history
+  coderecall history src/auth.ts --mode blame --from 40 --to 60
   coderecall stats
 `);
 }
@@ -138,7 +149,21 @@ async function main() {
 
   const db = new MemoryDatabase(dbPath);
   const embeddings = new EmbeddingManager(config.embeddingModel);
-  await embeddings.init();
+
+  // Loading the model costs a few seconds and ~34 MB. Commands that never
+  // embed anything should not pay it — `history` in particular reads git
+  // directly and touches neither the index nor the model.
+  const NEEDS_NO_EMBEDDINGS = new Set(["history", "stats", "list-knowledge"]);
+  if (!NEEDS_NO_EMBEDDINGS.has(command)) {
+    await embeddings.init();
+
+    // A width mismatch makes vector search fail silently, so say so up front
+    // rather than letting results quietly degrade to keyword-only.
+    const compat = db.checkEmbeddingCompatibility(embeddings.getModelName(), embeddings.getDimension());
+    if (!compat.ok) {
+      console.error(`⚠️  Embedding model mismatch: ${compat.reason}`);
+    }
+  }
 
   const search = new HybridSearch(db, embeddings);
   const chunker = new CodeChunker(db, embeddings);
@@ -148,23 +173,50 @@ async function main() {
       case "index": {
         const targetPath = parsed.positionals[0] || projectRoot;
         const extensions =
-          (typeof parsed.flags["extensions"] === "string"
-            ? (parsed.flags["extensions"] as string).split(",")
-            : null) || config.extensions;
+          (typeof parsed.flags["extensions"] === "string" ? (parsed.flags["extensions"] as string).split(",") : null) ||
+          config.extensions;
         const absolutePath = resolve(targetPath);
 
         console.log(`Indexing ${absolutePath}...`);
         console.log(`Extensions: ${extensions.join(", ")}`);
 
         const useGit = !parsed.flags["no-git-ls"];
-        const scanner = new FileScanner(absolutePath, { extensions, ignore: config.ignore, useGit });
+        const scanner = new FileScanner(absolutePath, {
+          extensions,
+          ignore: config.ignore,
+          useGit,
+          projectRoot
+        });
         const files = await scanner.scanAll();
         console.log(`Found ${files.length} files`);
 
-        const result = await chunker.indexFiles(files);
+        // Pruning compares the scan against the entire index, so it is only
+        // sound for a full project-root scan: a partial scan cannot be told
+        // apart from a project that shrank. (Paths are now project-relative, so
+        // scoped pruning is implementable via a prefix filter — not done here.)
+        const isFullScan = absolutePath === resolve(projectRoot);
+        const pruneOptOut = "no-prune" in parsed.flags;
+        const prune = isFullScan && !pruneOptOut;
+
+        if (!isFullScan) {
+          console.log(`Scoped scan — skipping prune (only full-project scans prune).`);
+        } else if (pruneOptOut) {
+          console.log(`Pruning disabled via --no-prune.`);
+        }
+
+        const result = await chunker.indexFiles(files, { prune });
         console.log(`\nIndexing complete:`);
         console.log(`  Files indexed: ${result.files_indexed}`);
         console.log(`  Chunks created: ${result.chunks_created}`);
+        if (prune) {
+          console.log(`  Files pruned: ${result.files_pruned}`);
+          for (const p of result.pruned_paths.slice(0, 10)) {
+            console.log(`    - ${p}`);
+          }
+          if (result.pruned_paths.length > 10) {
+            console.log(`    ... and ${result.pruned_paths.length - 10} more`);
+          }
+        }
         console.log(`  Time: ${result.time_ms}ms`);
         break;
       }
@@ -197,6 +249,7 @@ async function main() {
         }
 
         const filter = ((parsed.flags["filter"] as string) || "all") as "all" | "code" | "knowledge";
+        const searchType = ((parsed.flags["search-type"] as string) || "auto") as SearchType;
         const limit = parseInt((parsed.flags["limit"] as string) || "10");
         const expansion = ((parsed.flags["expansion"] as string) || "selective") as ExpansionMode;
 
@@ -210,8 +263,53 @@ async function main() {
           const results = await search.search(query, filter, limit);
           renderLegacy(results);
         } else {
-          const results = await search.tieredSearch(query, filter, limit, expansion);
+          const results = await search.tieredSearch(query, filter, limit, expansion, searchType);
           renderTiered(results);
+        }
+        break;
+      }
+
+      case "history": {
+        const mode = ((parsed.flags["mode"] as string) || "commits") as
+          | "commits"
+          | "file_history"
+          | "blame"
+          | "commit_detail";
+        const history = new GitHistory(projectRoot);
+        const limit = parsed.flags["limit"] ? parseInt(parsed.flags["limit"] as string) : undefined;
+        const positional = parsed.positionals[0];
+
+        try {
+          if (mode === "commits") {
+            if (!positional) throw new Error('Usage: coderecall history "<search string>"');
+            const r = history.searchCommits(positional, limit);
+            renderCommits(r, `Commits matching "${positional}"`);
+          } else if (mode === "file_history") {
+            if (!positional) throw new Error("Usage: coderecall history <path> --mode file_history");
+            const r = history.fileHistory(positional, limit);
+            renderCommits(r, `Commits touching ${positional}`);
+          } else if (mode === "blame") {
+            if (!positional) throw new Error("Usage: coderecall history <path> --mode blame [--from N] [--to M]");
+            const from = parsed.flags["from"] ? parseInt(parsed.flags["from"] as string) : undefined;
+            const to = parsed.flags["to"] ? parseInt(parsed.flags["to"] as string) : undefined;
+            const r = history.blame(positional, from, to);
+            for (const b of r.entries) {
+              console.log(
+                `${String(b.lineNumber).padStart(5)} ${b.shortSha} ${b.date.slice(0, 10)} ${b.author}: ${b.content}`
+              );
+            }
+            if (r.truncated) console.log(`\n(capped — pass --from/--to to widen the window)`);
+          } else {
+            if (!positional) throw new Error("Usage: coderecall history <rev> --mode commit_detail");
+            const c = history.commitDetail(positional).entries[0]!;
+            console.log(`${c.shortSha} ${c.subject}`);
+            console.log(`Author: ${c.author}   Date: ${c.date}`);
+            if (c.body) console.log(`\n${c.body}${c.bodyTruncated ? "\n… (body truncated)" : ""}`);
+            if (c.stat) console.log(`\n${c.stat}`);
+          }
+        } catch (err) {
+          console.error(err instanceof Error ? err.message : String(err));
+          process.exitCode = 1;
         }
         break;
       }
@@ -260,11 +358,14 @@ async function main() {
           title,
           content: contentLines.join("\n"),
           category: category as any,
-          tags: tagsInput.split(",").map((t) => t.trim()).filter(Boolean)
+          tags: tagsInput
+            .split(",")
+            .map((t) => t.trim())
+            .filter(Boolean)
         });
 
         const vector = await embeddings.embed(`${entry.title}\n${entry.content}`);
-        db.saveEmbedding("knowledge", entry.id, vector);
+        db.saveEmbedding("knowledge", entry.id, vector, embeddings.getModelName());
         db.indexForFTS(entry.id, "knowledge", entry.title, entry.content);
         console.log(`\nKnowledge entry created: ${entry.id}`);
         break;
@@ -351,7 +452,8 @@ async function runInit(parsed: ParsedOptions) {
 
   console.log(`Initializing coderecall in: ${targetRoot}\n`);
 
-  const flagLanguage = typeof parsed.flags["language"] === "string" ? (parsed.flags["language"] as string).toLowerCase() : null;
+  const flagLanguage =
+    typeof parsed.flags["language"] === "string" ? (parsed.flags["language"] as string).toLowerCase() : null;
   const flagExtensions = typeof parsed.flags["extensions"] === "string" ? (parsed.flags["extensions"] as string) : null;
 
   const detected = detectLanguage(targetRoot);
@@ -401,14 +503,9 @@ async function runInit(parsed: ParsedOptions) {
 
   // 2. .mcp.json (project-level Claude Code config)
   if (writeMcp) {
-    const mcpPath =
-      client === "cursor"
-        ? join(targetRoot, ".cursor", "mcp.json")
-        : join(targetRoot, ".mcp.json");
+    const mcpPath = client === "cursor" ? join(targetRoot, ".cursor", "mcp.json") : join(targetRoot, ".mcp.json");
 
-    const serverEntryArg = isVendored
-      ? "./" + relative(targetRoot, SERVER_ENTRY)
-      : SERVER_ENTRY;
+    const serverEntryArg = isVendored ? "./" + relative(targetRoot, SERVER_ENTRY) : SERVER_ENTRY;
 
     const mcpEntry: { command: string; args: string[]; env?: Record<string, string> } = {
       command: "bun",
@@ -442,7 +539,7 @@ async function runInit(parsed: ParsedOptions) {
         console.log(`Updated ${mcpPath}`);
       }
     } else {
-      mcpDoc = { mcpServers: { "coderecall": mcpEntry } };
+      mcpDoc = { mcpServers: { coderecall: mcpEntry } };
       mkdirSync(dirname(mcpPath), { recursive: true });
       writeFileSync(mcpPath, JSON.stringify(mcpDoc, null, 2) + "\n");
       console.log(`Wrote ${mcpPath}`);
@@ -500,9 +597,7 @@ async function resolveLanguageChoice(opts: {
   if (opts.flagLanguage) {
     const preset = LANGUAGE_PRESETS[opts.flagLanguage];
     if (!preset) {
-      console.error(
-        `Unknown --language "${opts.flagLanguage}". Known: ${Object.keys(LANGUAGE_PRESETS).join(", ")}.`
-      );
+      console.error(`Unknown --language "${opts.flagLanguage}". Known: ${Object.keys(LANGUAGE_PRESETS).join(", ")}.`);
       console.error(`Or pass extensions directly: --extensions ".foo,.bar"`);
       process.exit(1);
     }
@@ -578,6 +673,21 @@ function freshnessLine(f: IndexFreshness): string {
 
 // ==================== rendering helpers ====================
 
+function renderCommits(result: HistoryResult<CommitSummary>, heading: string) {
+  if (result.entries.length === 0) {
+    console.log(`${heading}: none found.`);
+    return;
+  }
+  console.log(`${heading}:`);
+  for (const c of result.entries) {
+    console.log(`  ${c.shortSha}  ${c.date.slice(0, 10)}  ${c.author}: ${c.subject}`);
+  }
+  const notes: string[] = [];
+  if (result.truncated) notes.push("more results exist — raise --limit");
+  if (result.shallow) notes.push("shallow clone: history truncated, results may be incomplete");
+  if (notes.length) console.log(`\n(${notes.join("; ")})`);
+}
+
 function renderLegacy(results: any[]) {
   if (results.length === 0) {
     console.log("No results found.");
@@ -610,7 +720,9 @@ function renderTiered(results: any[]) {
   const fullCount = results.filter((r) => r.expansion === "full").length;
   const summaryCount = results.filter((r) => r.expansion === "summary").length;
   const metadataCount = results.filter((r) => r.expansion === "metadata").length;
-  console.log(`Found ${results.length} results (${fullCount} full, ${summaryCount} summary, ${metadataCount} metadata-only)\n`);
+  console.log(
+    `Found ${results.length} results (${fullCount} full, ${summaryCount} summary, ${metadataCount} metadata-only)\n`
+  );
 
   for (const r of results) {
     const emoji = r.confidence === "high" ? "🟢" : r.confidence === "medium" ? "🟡" : "🔴";
@@ -620,7 +732,9 @@ function renderTiered(results: any[]) {
       console.log(`  Score: ${r.score.toFixed(4)} | Confidence: ${r.confidence}`);
       if (r.signature) console.log(`  Signature: ${r.signature}`);
       if (r.expansion === "full" && r.content) {
-        console.log(`  Content:\n${r.content.slice(0, 300).replace(/^/gm, "    ")}${r.content.length > 300 ? "..." : ""}`);
+        console.log(
+          `  Content:\n${r.content.slice(0, 300).replace(/^/gm, "    ")}${r.content.length > 300 ? "..." : ""}`
+        );
       } else if (r.expansion === "summary" && r.summary) {
         console.log(`  Summary: ${r.summary}`);
       }
@@ -630,7 +744,9 @@ function renderTiered(results: any[]) {
       console.log(`  Score: ${r.score.toFixed(4)} | Confidence: ${r.confidence}`);
       console.log(`  Tags: ${r.tags?.join(", ") || "none"}`);
       if (r.expansion === "full" && r.content) {
-        console.log(`  Content:\n${r.content.slice(0, 300).replace(/^/gm, "    ")}${r.content.length > 300 ? "..." : ""}`);
+        console.log(
+          `  Content:\n${r.content.slice(0, 300).replace(/^/gm, "    ")}${r.content.length > 300 ? "..." : ""}`
+        );
       } else if (r.expansion === "summary" && r.summary) {
         console.log(`  Summary: ${r.summary}`);
       }

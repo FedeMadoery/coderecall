@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import { resolve } from "path";
 
 import { MemoryDatabase } from "../storage/database";
 import { EmbeddingManager } from "../embeddings/manager";
@@ -8,6 +9,9 @@ import { HybridSearch } from "../search/hybrid";
 import { CodeChunker } from "../indexer/chunker";
 import { FileScanner } from "../indexer/scanner";
 import type { ExpansionMode, IndexFreshness, TieredResult } from "../types";
+import type { SearchType } from "../search/profiles";
+import { GitHistory, DEFAULT_LIMIT, MAX_LIMIT, type CommitSummary, type HistoryResult } from "../git/history";
+import { GitError } from "../git/exec";
 import type { CoderecallConfig } from "../config";
 
 function freshnessBanner(f: IndexFreshness): string {
@@ -17,6 +21,15 @@ function freshnessBanner(f: IndexFreshness): string {
   if (f.status === "fresh") return "";
   const icon = f.status === "very_stale" ? "🔴" : "🟡";
   return `${icon} Index is ${f.daysOld} days old (threshold: ${f.staleAfterDays}d). Consider \`coderecall index\` to refresh.`;
+}
+
+function formatCommits(result: HistoryResult<CommitSummary>, heading: string): string {
+  if (result.entries.length === 0) return `${heading}: none found.`;
+  const lines = result.entries.map((c) => `  ${c.shortSha}  ${c.date.slice(0, 10)}  ${c.author}: ${c.subject}`);
+  const notes: string[] = [];
+  if (result.truncated) notes.push("more results exist — raise `limit` to see them");
+  if (result.shallow) notes.push("shallow clone: history is truncated, results may be incomplete");
+  return [`${heading}:`, ...lines, notes.length ? `\n(${notes.join("; ")})` : ""].filter(Boolean).join("\n");
 }
 
 function withBanner(banner: string, body: string): string {
@@ -85,7 +98,7 @@ export class CoderecallServer {
       "search",
       {
         description:
-          "Search code and knowledge with confidence-tiered expansion. Returns each result at one of three tiers (full content / summary / metadata-only) based on how confident the ranker is about it — so high-signal hits get full context and low-signal hits stay cheap.",
+          "Search code and knowledge with confidence-tiered expansion. Returns each result at one of three tiers (full content / summary / metadata-only) based on how confident the ranker is about it — so high-signal hits get full context and low-signal hits stay cheap. Retrieval adapts to the kind of question via search_type.",
         inputSchema: {
           query: z.string().describe("Natural language search query"),
           filter: z.enum(["all", "code", "knowledge"]).default("all").describe("Filter results by type"),
@@ -93,12 +106,26 @@ export class CoderecallServer {
           expansion_mode: z
             .enum(["all", "selective", "metadata_only"])
             .default("selective")
-            .describe("Expansion mode: 'all' (full content), 'selective' (tiered by confidence), 'metadata_only' (minimal)")
+            .describe(
+              "Expansion mode: 'all' (full content), 'selective' (tiered by confidence), 'metadata_only' (minimal)"
+            ),
+          search_type: z
+            .enum(["auto", "definition", "topic"])
+            .default("auto")
+            .describe(
+              "What kind of question this is. 'definition' when the query IS an identifier you want the declaration of (a class, function, or method name) — narrows the search and expands exact name matches in full. 'topic' for conceptual questions in prose ('how does X work', 'where is Y handled') — searches wider and leans on semantic similarity. 'auto' (default) infers it from the query shape, so passing it is an optimisation, not a requirement."
+            )
         }
       },
       async (args) => {
-        const { query, filter = "all", limit = 10, expansion_mode = "selective" } = args;
-        const results = await this.search.tieredSearch(query, filter, limit, expansion_mode as ExpansionMode);
+        const { query, filter = "all", limit = 10, expansion_mode = "selective", search_type = "auto" } = args;
+        const results = await this.search.tieredSearch(
+          query,
+          filter,
+          limit,
+          expansion_mode as ExpansionMode,
+          search_type as SearchType
+        );
 
         const formatted = results.map((r) => this.formatTieredResult(r));
 
@@ -134,7 +161,7 @@ export class CoderecallServer {
         const entry = this.db.addKnowledge({ title, content, category, tags });
 
         const vector = await this.embeddings.embed(`${title}\n${content}`);
-        this.db.saveEmbedding("knowledge", entry.id, vector);
+        this.db.saveEmbedding("knowledge", entry.id, vector, this.embeddings.getModelName());
 
         this.db.indexForFTS(entry.id, "knowledge", title, content);
 
@@ -197,34 +224,72 @@ export class CoderecallServer {
           extensions: z
             .array(z.string())
             .optional()
-            .describe("File extensions to include (defaults to project config)")
+            .describe("File extensions to include (defaults to project config)"),
+          prune: z
+            .boolean()
+            .optional()
+            .default(false)
+            .describe(
+              "Also drop index entries for files that no longer exist (deleted/renamed). Only applied when the path is the project root, since pruning a partial scan would delete the rest of the index."
+            )
         }
       },
       async (args) => {
-        const { paths, extensions } = args;
+        const { paths, extensions, prune = false } = args;
         const exts = extensions ?? this.config.extensions;
 
         let totalFiles = 0;
         let totalChunks = 0;
         let totalTime = 0;
+        let totalPruned = 0;
+        const prunedPaths: string[] = [];
+        let pruneSkipped = false;
 
         for (const basePath of paths) {
-          const scanner = new FileScanner(basePath, { extensions: exts, ignore: this.config.ignore });
+          const scanner = new FileScanner(basePath, {
+            extensions: exts,
+            ignore: this.config.ignore,
+            projectRoot: this.config.projectRoot
+          });
           const files = await scanner.scanAll();
-          const result = await this.chunker.indexFiles(files);
+
+          // Pruning compares the scan against the whole index, so it is only
+          // sound when this scan covers the whole project.
+          const isProjectRoot = resolve(basePath) === resolve(this.config.projectRoot);
+          const pruneThisPath = prune && isProjectRoot;
+          if (prune && !isProjectRoot) pruneSkipped = true;
+
+          const result = await this.chunker.indexFiles(files, { prune: pruneThisPath });
 
           totalFiles += result.files_indexed;
           totalChunks += result.chunks_created;
           totalTime += result.time_ms;
+          totalPruned += result.files_pruned;
+          prunedPaths.push(...result.pruned_paths);
+        }
+
+        const lines = [
+          `Indexing complete:`,
+          `- Files indexed: ${totalFiles}`,
+          `- Chunks created: ${totalChunks}`,
+          `- Time: ${totalTime}ms`,
+          `- Extensions: ${exts.join(", ")}`
+        ];
+        if (prune) {
+          lines.push(`- Files pruned: ${totalPruned}`);
+          if (prunedPaths.length > 0) {
+            lines.push(...prunedPaths.slice(0, 20).map((p) => `    - ${p}`));
+            if (prunedPaths.length > 20) lines.push(`    ... and ${prunedPaths.length - 20} more`);
+          }
+          if (pruneSkipped) {
+            lines.push(
+              `- Note: prune was requested but skipped for paths outside the project root (${this.config.projectRoot}).`
+            );
+          }
         }
 
         return {
-          content: [
-            {
-              type: "text" as const,
-              text: `Indexing complete:\n- Files indexed: ${totalFiles}\n- Chunks created: ${totalChunks}\n- Time: ${totalTime}ms\n- Extensions: ${exts.join(", ")}`
-            }
-          ]
+          content: [{ type: "text" as const, text: lines.join("\n") }]
         };
       }
     );
@@ -255,6 +320,80 @@ export class CoderecallServer {
             }
           ]
         };
+      }
+    );
+
+    this.mcpServer.registerTool(
+      "search_history",
+      {
+        description:
+          "Search git history: commit messages, a file's commits, or line-by-line blame. Reads git directly — no index, so it is never stale and needs no reindex. Use it for 'when did this change', 'why was this added', 'who last touched these lines'.",
+        inputSchema: {
+          mode: z
+            .enum(["commits", "file_history", "blame", "commit_detail"])
+            .default("commits")
+            .describe(
+              "'commits' searches commit messages for a literal string. 'file_history' lists commits touching one path. 'blame' shows who last changed a line range. 'commit_detail' shows one commit's message and change stat."
+            ),
+          query: z
+            .string()
+            .optional()
+            .describe("Search string, for mode 'commits'. Matched literally, not as a regex."),
+          path: z.string().optional().describe("Repository-relative file path, for 'file_history' and 'blame'"),
+          rev: z.string().optional().describe("Commit-ish, for 'commit_detail' (a SHA, tag, or HEAD~2)"),
+          line_start: z.number().optional().describe("First line, for 'blame'"),
+          line_end: z.number().optional().describe("Last line, for 'blame'"),
+          limit: z.number().optional().describe(`Max entries (default ${DEFAULT_LIMIT}, max ${MAX_LIMIT})`)
+        }
+      },
+      async (args) => {
+        const { mode = "commits", query, path, rev, line_start, line_end, limit } = args;
+        const history = new GitHistory(this.config.projectRoot);
+
+        try {
+          let text: string;
+
+          if (mode === "commits") {
+            if (!query) throw new GitError("mode 'commits' needs a query.");
+            const result = history.searchCommits(query, limit);
+            text = formatCommits(result, `Commits matching ${JSON.stringify(query)}`);
+          } else if (mode === "file_history") {
+            if (!path) throw new GitError("mode 'file_history' needs a path.");
+            const result = history.fileHistory(path, limit);
+            text = formatCommits(result, `Commits touching ${path}`);
+          } else if (mode === "blame") {
+            if (!path) throw new GitError("mode 'blame' needs a path.");
+            const result = history.blame(path, line_start, line_end);
+            const lines = result.entries.map(
+              (b) =>
+                `  ${String(b.lineNumber).padStart(5)} ${b.shortSha} ${b.date.slice(0, 10)} ${b.author}: ${b.content}`
+            );
+            text = [
+              `Blame for ${path}${line_start ? ` lines ${line_start}-${line_end ?? line_start}` : ""}:`,
+              ...lines,
+              result.truncated ? `\n(capped — pass line_start/line_end to widen the window)` : ""
+            ]
+              .filter(Boolean)
+              .join("\n");
+          } else {
+            if (!rev) throw new GitError("mode 'commit_detail' needs a rev.");
+            const result = history.commitDetail(rev);
+            const c = result.entries[0]!;
+            text = [
+              `${c.shortSha} ${c.subject}`,
+              `Author: ${c.author}   Date: ${c.date}`,
+              c.body ? `\n${c.body}${c.bodyTruncated ? "\n… (body truncated)" : ""}` : "",
+              c.stat ? `\n${c.stat}` : ""
+            ]
+              .filter(Boolean)
+              .join("\n");
+          }
+
+          return { content: [{ type: "text" as const, text }] };
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          return { content: [{ type: "text" as const, text: `History search failed: ${message}` }], isError: true };
+        }
       }
     );
 
@@ -355,6 +494,14 @@ export class CoderecallServer {
   async run() {
     await this.embeddings.init();
 
+    // Fail loudly on a model/width mismatch. Left unchecked, cosineSimilarity
+    // throws inside vectorSearch, the error is swallowed, and every search
+    // silently degrades to keyword-only for the life of the server.
+    const compat = this.db.checkEmbeddingCompatibility(this.embeddings.getModelName(), this.embeddings.getDimension());
+    if (!compat.ok) {
+      console.error(`⚠️  Embedding model mismatch: ${compat.reason}`);
+    }
+
     const warm = this.db.warmEmbeddingsCache();
     if (warm.loaded > 0) {
       const mb = (warm.bytes / (1024 * 1024)).toFixed(1);
@@ -370,4 +517,3 @@ export class CoderecallServer {
     this.db.close();
   }
 }
-

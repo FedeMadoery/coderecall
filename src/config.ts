@@ -47,7 +47,7 @@ export const DEFAULTS: CoderecallConfig = {
   projectRoot: process.cwd(),
   extensions: [".ts", ".tsx", ".js", ".jsx"],
   ignore: DEFAULT_IGNORE,
-  embeddingModel: "Xenova/bge-small-en-v1.5",
+  embeddingModel: "Snowflake/snowflake-arctic-embed-s",
   staleAfterDays: 14,
   veryStaleAfterDays: 30
 };
@@ -74,9 +74,13 @@ export function loadConfig(projectRoot: string = process.cwd()): CoderecallConfi
 
   const env = {
     indexPath: process.env.CODERECALL_INDEX_PATH,
-    extensions: process.env.CODERECALL_EXTENSIONS?.split(",").map((s) => s.trim()).filter(Boolean),
+    extensions: process.env.CODERECALL_EXTENSIONS?.split(",")
+      .map((s) => s.trim())
+      .filter(Boolean),
     embeddingModel: process.env.CODERECALL_EMBEDDING_MODEL,
-    ignore: process.env.CODERECALL_IGNORE?.split(",").map((s) => s.trim()).filter(Boolean)
+    ignore: process.env.CODERECALL_IGNORE?.split(",")
+      .map((s) => s.trim())
+      .filter(Boolean)
   };
 
   const merged: CoderecallConfig = {
