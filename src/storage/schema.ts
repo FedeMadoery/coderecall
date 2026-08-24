@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS embeddings (
   source_type TEXT CHECK(source_type IN ('code', 'knowledge')),
   source_id TEXT NOT NULL,
   vector BLOB NOT NULL,
-  model TEXT DEFAULT 'Xenova/bge-small-en-v1.5'
+  model TEXT
 );
 
 -- Full-text search (unified)

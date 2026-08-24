@@ -8,7 +8,7 @@ things being measured change.
 |---|---|---|---|
 | 0 | Retrieval eval harness | ✅ **DONE** — 32 labelled queries, baseline recorded | shipped |
 | 5 | Deletion/rename pruning in full `index` | ✅ **DONE** — 16% → 0% phantom results | shipped |
-| 1 | Code-aware embedding model | Biggest quality lever; must be measured, not assumed | 1.5–2 d |
+| 1 | Embedding model | ✅ **DONE** — premise refuted; switched to arctic-embed-s instead | shipped |
 | 2 | Intent routing + tier recalibration | Recalibration must follow the model swap | 2–3 d |
 | 3 | `search_history` (git-backed, index-free) | Independent; closes a visible gap vs code-memory | 1 d |
 
@@ -244,7 +244,77 @@ reindex. Exit criterion is **0 phantom files, 0 dead chunks, 0% phantom results*
 
 ---
 
-## Phase 1 — Code-aware embedding model
+## Phase 1 — Embedding model (premise refuted)
+
+> **Status: shipped 2026-08-24.** The hypothesis behind this phase — that a
+> code-trained model is the biggest available quality lever — **did not survive
+> measurement**. The code model lost. Two other things in this phase did win.
+>
+> ### Four-way comparison (same corpus, same fixture, same thresholds)
+>
+> | | bge no-prefix | bge + prefix | **arctic-s** | jina-code |
+> |---|---|---|---|---|
+> | dim / download | 384 / 34 MB | 384 / 34 MB | **384 / 34 MB** | 768 / 162 MB |
+> | index build (2,301 chunks) | — | 85 s + 4 s | **87 s + 5 s** | 682 s + 285 s |
+> | hit@10 | 100.0% | 96.7% | **100.0%** | 100.0% |
+> | recall@10 | 86.7% | 88.3% | **91.1%** | 86.1% |
+> | MRR | 0.783 | 0.800 | **0.802** | 0.732 |
+> | P@1 | 66.7% | 70.0% | **70.0%** | 63.3% |
+> | full precision¹ | 36.0% | 41.9% | 57.1% | 41.2% |
+>
+> ¹ **Not comparable across models.** Tier thresholds (0.7/0.4) are fixed, but
+> each model has its own score distribution — mean top score was 0.744 (bge),
+> 0.687 (arctic), 0.679 (jina). A model that scores lower expands less often,
+> which mechanically inflates its precision. Judge Phase 1 on the
+> threshold-independent metrics; `full precision` becomes comparable only after
+> Phase 2 calibrates thresholds per distribution.
+>
+> ### Decisions
+>
+> **1. Query prefixes: adopted.** bge is trained asymmetrically and coderecall
+> applied no prefix at all. Adding it (query side only) gained recall@10
+> +1.7pp, MRR +0.017, P@1 +3.3pp on an unchanged index — the cheapest win in
+> the whole plan. Now a per-model registry; unknown models get none, because a
+> wrong prefix is worse than none.
+>
+> **2. Default switched to `Snowflake/snowflake-arctic-embed-s`.** Same 384-D
+> width, same 34 MB, +2 s index time — and better on every
+> threshold-independent metric (recall@10 +2.8pp, hit@10 +3.3pp, definition MRR
+> 0.872 vs 0.836, definition P@1 83.3% vs 75.0%, knowledge recall 91.7% vs
+> 81.3%). The gain is **modest, not dramatic**: overall MRR and P@1 are
+> effectively flat, and hit@10's +3.3pp is one query out of 30. It is adopted
+> because it is free, not because it is transformative. Existing indexes need
+> one reindex, which the new compatibility check now tells users about.
+>
+> **3. `jina-embeddings-v2-base-code`: rejected.** It loads fine under
+> `@xenova/transformers` v2.17 (the gating question — ALiBi `JinaBertModel`
+> behind `model_type: "bert"` was not a problem, no v3 upgrade needed), but it
+> ranks worse on this corpus while costing 5× the download and **10.8× the
+> index time** (967 s vs 89 s). Worth recording: its *definition* full
+> precision was 90% vs bge's 50% — it is genuinely good at symbol-level
+> precision and bad at conversational topic queries (topic MRR 0.652 vs 0.813).
+> If Phase 2's intent routing ever justified a per-intent model, that is the
+> evidence — but it doubles the footprint on n=12, so not now.
+>
+> ### Also shipped
+>
+> - **Dimension is probed, not assumed.** It was hardcoded to 384, which is
+>   exactly how a 768-D swap goes unnoticed.
+> - **Model drift is detected.** `saveEmbedding` took a `model` argument that no
+>   caller ever passed, so the column always claimed bge-small. All five call
+>   sites now pass it, the index stamps model + width in `meta`, and startup
+>   reports both width mismatches and same-width model changes. This closed a
+>   silent-failure path where `cosineSimilarity` throws, `vectorSearch` swallows
+>   it, and search degrades to keyword-only for the life of the process.
+>
+> ### Found, not fixed
+>
+> Knowledge entries are embedded **one at a time** while code chunks go through
+> `embedBatch` — visible as 78 entries taking 285 s under jina vs 5 s under
+> arctic. Worth batching in `markdown.ts` / `rules-importer.ts` regardless of
+> model.
+
+## Original research plan
 
 `Xenova/bge-small-en-v1.5` is a general English retrieval model being asked to
 embed source code. This is the weakest link in the hybrid: the

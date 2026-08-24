@@ -47,7 +47,7 @@ export const DEFAULTS: CoderecallConfig = {
   projectRoot: process.cwd(),
   extensions: [".ts", ".tsx", ".js", ".jsx"],
   ignore: DEFAULT_IGNORE,
-  embeddingModel: "Xenova/bge-small-en-v1.5",
+  embeddingModel: "Snowflake/snowflake-arctic-embed-s",
   staleAfterDays: 14,
   veryStaleAfterDays: 30
 };

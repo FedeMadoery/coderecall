@@ -17,7 +17,7 @@
 - **Knows when it's stale.** Every search response embeds a banner the agent can see (`🟡 Index is 17 days old`), so the model can prompt you to reindex instead of silently searching old code.
 - **Code + knowledge in one call.** `add_knowledge("we use SWR not React Query because…")` lives next to your source in the same index, retrieved by the same `search` tool.
 - **6 languages with real parsers** — TypeScript/JavaScript, Python, Go, Rust, Ruby, Elixir — plus a generic fallback. Adding a new one is a single file.
-- **Truly local.** Embeddings run in-process via `Xenova/bge-small-en-v1.5` (384-D, ~30 MB on first run). Index lives in a single `.coderecall/index.db` — gitignored per developer, vectors never travel through git. The tool itself is vendored at `tools/coderecall/` and committed, so the whole team stays on the same pinned version.
+- **Truly local.** Embeddings run in-process via `Snowflake/snowflake-arctic-embed-s` (384-D, ~34 MB on first run). Index lives in a single `.coderecall/index.db` — gitignored per developer, vectors never travel through git. The tool itself is vendored at `tools/coderecall/` and committed, so the whole team stays on the same pinned version.
 
 ---
 
@@ -261,7 +261,7 @@ All commands honor `CODERECALL_PROJECT_ROOT`, `CODERECALL_INDEX_PATH`, `CODERECA
     "**/node_modules/**", "**/dist/**", "**/build/**",
     "**/.next/**", "**/.git/**", "**/.coderecall/**"
   ],
-  "embeddingModel": "Xenova/bge-small-en-v1.5",
+  "embeddingModel": "Snowflake/snowflake-arctic-embed-s",
   "staleAfterDays": 14,
   "veryStaleAfterDays": 30
 }
@@ -270,7 +270,7 @@ All commands honor `CODERECALL_PROJECT_ROOT`, `CODERECALL_INDEX_PATH`, `CODERECA
 - `indexPath` — where the SQLite DB lives. Relative paths resolve from the project root.
 - `extensions` — what gets parsed. Anything not in the language registry falls back to a generic block chunker.
 - `ignore` — glob patterns excluded during scanning.
-- `embeddingModel` — defaults to `Xenova/bge-small-en-v1.5` (384-D, ~30 MB). The vector width is read from the model at load time, not assumed, and the model + width are stamped into the index. **Any model change requires a reindex** (`rm -rf .coderecall && coderecall index`): a different width breaks vector comparison outright, and a same-width model produces vectors that are comparable in shape but not in meaning. Either way coderecall now says so on startup instead of silently degrading to keyword-only search.
+- `embeddingModel` — defaults to `Snowflake/snowflake-arctic-embed-s` (384-D, ~34 MB), chosen by measurement against a 30-query labelled set rather than by reputation; see `docs/plan/IMPROVEMENT-PLAN.md` for the four-way comparison, including why the code-trained 768-D model lost. The vector width is read from the model at load time, not assumed, and the model + width are stamped into the index. **Any model change requires a reindex** (`rm -rf .coderecall && coderecall index`): a different width breaks vector comparison outright, and a same-width model produces vectors that are comparable in shape but not in meaning. Either way coderecall now says so on startup instead of silently degrading to keyword-only search.
 - Retrieval models that are trained asymmetrically get their documented **query-side instruction prefix** applied automatically (BGE and arctic-embed families); symmetric models like the Jina v2 line get none. Documents are always embedded bare. `CODERECALL_QUERY_PREFIX` overrides this — set it to an empty string to disable prefixing.
 - `staleAfterDays` / `veryStaleAfterDays` — yellow / red staleness banner thresholds. Defaults: 14 / 30.
 

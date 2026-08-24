@@ -201,12 +201,7 @@ export class MemoryDatabase {
 
   // ==================== Embedding Operations ====================
 
-  saveEmbedding(
-    sourceType: "code" | "knowledge",
-    sourceId: string,
-    vector: Float32Array,
-    model: string = "Xenova/bge-small-en-v1.5"
-  ) {
+  saveEmbedding(sourceType: "code" | "knowledge", sourceId: string, vector: Float32Array, model: string) {
     // Stamp which model actually produced the vectors in this index. Without
     // this, a model or dimension swap is undetectable: cosineSimilarity throws
     // on a width mismatch, vectorSearch swallows it, and search silently

@@ -45,7 +45,7 @@ export class EmbeddingManager {
   private dimension: number | null = null;
   private queryPrefix: string;
 
-  constructor(modelName: string = "Xenova/bge-small-en-v1.5") {
+  constructor(modelName: string = "Snowflake/snowflake-arctic-embed-s") {
     this.modelName = modelName;
     this.queryPrefix = queryPrefixFor(modelName);
   }
