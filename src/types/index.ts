@@ -109,4 +109,8 @@ export interface IndexFilesResult {
   files_indexed: number;
   chunks_created: number;
   time_ms: number;
+  /** Files dropped from the index because they no longer exist in the scan. */
+  files_pruned: number;
+  /** Paths of the pruned files, so callers can show what was removed. */
+  pruned_paths: string[];
 }

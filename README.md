@@ -31,6 +31,7 @@
 | Single-file SQLite — no daemon, no Docker | ✅ | ❌ | ❌ | ❌ |
 | Tells the agent when the index is stale | ✅ | ❌ | ❌ | ❌ |
 | `git diff` aware incremental reindex | ✅ | partial | n/a | ❌ |
+| Removes deleted/renamed files from the index | ✅ | ❌ | n/a | ❌ |
 | Works with any MCP client | ✅ | ✅ | ✅ | ❌ (VS Code extension) |
 
 ---
@@ -101,7 +102,7 @@ this repo and any knowledge entries added via `add_knowledge`.
 | `search_memory` | Same hybrid search, always returns full content. |
 | `add_knowledge` | Store a knowledge entry (`architecture` / `decision` / `pattern` / `note` / `troubleshooting`). |
 | `list_knowledge` | List entries, optionally filtered by category or tag. |
-| `index_files` | Index a path. Defaults to extensions from `.coderecall.json`. |
+| `index_files` | Index a path. Defaults to extensions from `.coderecall.json`. Pass `prune: true` on a project-root reindex to also drop deleted files. |
 | `index_diff` | Index only files changed between two git refs — fastest way to refresh after a branch switch or `git pull`. |
 | `get_file_context` | List every chunk in a file with line ranges and signatures. |
 | `get_index_stats` | File count, chunk count, knowledge count, last-indexed timestamp. |
@@ -159,14 +160,16 @@ Scans the project, parses every file matching `extensions`, chunks it, embeds ea
 
 `coderecall index` is **content-hash-aware**: every file's SHA-256 is stored, and unchanged files are skipped instantly. Running `coderecall index` against a fully-up-to-date repo finishes in under a second. So the safe default after a work session is to just re-run it.
 
-The one thing a full `index` does **not** handle is **deleted or renamed files** — chunks for files that no longer exist stay in the DB. Use `index-diff` (which inspects `git diff --name-status`) or nuke `.coderecall/` when that matters.
+A full `index` also **prunes**: any file in the index that the scan no longer sees — deleted, renamed, newly gitignored, or dropped from `extensions` — has its chunks, vectors, and FTS rows removed. This matters more than it sounds. On a real 416-file project, 31 deleted files were still carrying 274 chunks and surfacing in **16% of code results**, some at full expansion — handing the agent the complete contents of a file that no longer existed. Pruning is on by default for full-project runs; pass `--no-prune` to keep the old behaviour.
+
+Pruning is deliberately **skipped for scoped scans** (`coderecall index ./src`) — a partial scan can't be distinguished from a shrunken project, so pruning one would delete everything it didn't cover. An empty scan never prunes either, so a mistyped `--extensions` can't wipe your index.
 
 ### When to run what
 
 | Situation | Command |
 |---|---|
 | You edited some files | `coderecall index` |
-| You deleted, moved, or renamed files | `coderecall index-diff . --base HEAD~1 --head HEAD` |
+| You deleted, moved, or renamed files | `coderecall index` (prunes them automatically) |
 | You just `git pull`ed teammate work | `coderecall index-diff . --base ORIG_HEAD --head HEAD` |
 | You switched branches | `coderecall index-diff . --base <prev-branch> --head HEAD` |
 | You changed `extensions` or `ignore` in config | `rm -rf .coderecall && coderecall index` |
@@ -228,7 +231,7 @@ A new language is **a single file** in `src/indexer/parsers/<lang>.ts` implement
 
 ```bash
 coderecall init [path] [--language <name>] [--extensions ".ext1,.ext2"] [--force] [--no-mcp]
-coderecall index [path] [--extensions ".ext1,.ext2"] [--no-git-ls]
+coderecall index [path] [--extensions ".ext1,.ext2"] [--no-git-ls] [--no-prune]
 coderecall index-diff [path] --base HEAD~1 --head HEAD
 coderecall search "<query>" [--filter code|knowledge] [--limit 10] [--expansion selective|all|metadata_only]
 coderecall search-legacy "<query>"       # full-expansion mode (no tiering)
@@ -279,7 +282,7 @@ All commands honor `CODERECALL_PROJECT_ROOT`, `CODERECALL_INDEX_PATH`, `CODERECA
 
 **Search returns nothing** — run `coderecall stats`. If `Total chunks` is 0, run `coderecall index`.
 
-**Search returns stale results / deleted files** — full `index` doesn't clean deletions. Run `coderecall index-diff` or `rm -rf .coderecall && coderecall index`.
+**Search returns deleted files** — run `coderecall index` from the project root; it prunes files that no longer exist. If you've only ever run scoped scans (`coderecall index ./src`), those don't prune by design — run it once from the root.
 
 **First search/index is slow** — first run downloads the ~30 MB embedding model. Subsequent runs use the local cache.
 

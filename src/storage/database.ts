@@ -133,6 +133,12 @@ export class MemoryDatabase {
     return this.db.prepare("SELECT * FROM code_files WHERE filepath = ?").get(filepath) as CodeFile | null;
   }
 
+  /** Every filepath currently in the index. Used to prune files deleted on disk. */
+  listCodeFilepaths(): string[] {
+    const rows = this.db.prepare("SELECT filepath FROM code_files").all() as Array<{ filepath: string }>;
+    return rows.map((r) => r.filepath);
+  }
+
   getCodeFileById(id: string): CodeFile | null {
     return this.db.prepare("SELECT * FROM code_files WHERE id = ?").get(id) as CodeFile | null;
   }

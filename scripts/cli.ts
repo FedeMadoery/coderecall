@@ -60,6 +60,8 @@ Init options:
 Indexing options:
   --extensions <exts>       Comma-separated file extensions (defaults to config)
   --no-git-ls               Skip 'git ls-files'; use glob walk instead (pyvenv.cfg detection added for Python projects)
+  --no-prune                Keep index entries for files that no longer exist. A full-project 'index'
+                            prunes deleted/renamed files by default; scoped scans never prune.
   --base <ref>              Base git ref for diff (default: HEAD~1)
   --head <ref>              Head git ref for diff (default: HEAD)
 
@@ -161,10 +163,34 @@ async function main() {
         const files = await scanner.scanAll();
         console.log(`Found ${files.length} files`);
 
-        const result = await chunker.indexFiles(files);
+        // Pruning compares the scan against the entire index, so it is only
+        // sound for a full project-root scan. A scoped run (`index ./src`) also
+        // stores paths relative to that subdirectory, which makes them
+        // indistinguishable from root-relative ones — another reason not to
+        // prune on anything but the root.
+        const isFullScan = absolutePath === resolve(projectRoot);
+        const pruneOptOut = "no-prune" in parsed.flags;
+        const prune = isFullScan && !pruneOptOut;
+
+        if (!isFullScan) {
+          console.log(`Scoped scan — skipping prune (only full-project scans prune).`);
+        } else if (pruneOptOut) {
+          console.log(`Pruning disabled via --no-prune.`);
+        }
+
+        const result = await chunker.indexFiles(files, { prune });
         console.log(`\nIndexing complete:`);
         console.log(`  Files indexed: ${result.files_indexed}`);
         console.log(`  Chunks created: ${result.chunks_created}`);
+        if (prune) {
+          console.log(`  Files pruned: ${result.files_pruned}`);
+          for (const p of result.pruned_paths.slice(0, 10)) {
+            console.log(`    - ${p}`);
+          }
+          if (result.pruned_paths.length > 10) {
+            console.log(`    ... and ${result.pruned_paths.length - 10} more`);
+          }
+        }
         console.log(`  Time: ${result.time_ms}ms`);
         break;
       }

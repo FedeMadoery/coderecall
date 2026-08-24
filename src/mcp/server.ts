@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import { resolve } from "path";
 
 import { MemoryDatabase } from "../storage/database";
 import { EmbeddingManager } from "../embeddings/manager";
@@ -197,34 +198,68 @@ export class CoderecallServer {
           extensions: z
             .array(z.string())
             .optional()
-            .describe("File extensions to include (defaults to project config)")
+            .describe("File extensions to include (defaults to project config)"),
+          prune: z
+            .boolean()
+            .optional()
+            .default(false)
+            .describe(
+              "Also drop index entries for files that no longer exist (deleted/renamed). Only applied when the path is the project root, since pruning a partial scan would delete the rest of the index."
+            )
         }
       },
       async (args) => {
-        const { paths, extensions } = args;
+        const { paths, extensions, prune = false } = args;
         const exts = extensions ?? this.config.extensions;
 
         let totalFiles = 0;
         let totalChunks = 0;
         let totalTime = 0;
+        let totalPruned = 0;
+        const prunedPaths: string[] = [];
+        let pruneSkipped = false;
 
         for (const basePath of paths) {
           const scanner = new FileScanner(basePath, { extensions: exts, ignore: this.config.ignore });
           const files = await scanner.scanAll();
-          const result = await this.chunker.indexFiles(files);
+
+          // Pruning compares the scan against the whole index, so it is only
+          // sound when this scan covers the whole project.
+          const isProjectRoot = resolve(basePath) === resolve(this.config.projectRoot);
+          const pruneThisPath = prune && isProjectRoot;
+          if (prune && !isProjectRoot) pruneSkipped = true;
+
+          const result = await this.chunker.indexFiles(files, { prune: pruneThisPath });
 
           totalFiles += result.files_indexed;
           totalChunks += result.chunks_created;
           totalTime += result.time_ms;
+          totalPruned += result.files_pruned;
+          prunedPaths.push(...result.pruned_paths);
+        }
+
+        const lines = [
+          `Indexing complete:`,
+          `- Files indexed: ${totalFiles}`,
+          `- Chunks created: ${totalChunks}`,
+          `- Time: ${totalTime}ms`,
+          `- Extensions: ${exts.join(", ")}`
+        ];
+        if (prune) {
+          lines.push(`- Files pruned: ${totalPruned}`);
+          if (prunedPaths.length > 0) {
+            lines.push(...prunedPaths.slice(0, 20).map((p) => `    - ${p}`));
+            if (prunedPaths.length > 20) lines.push(`    ... and ${prunedPaths.length - 20} more`);
+          }
+          if (pruneSkipped) {
+            lines.push(
+              `- Note: prune was requested but skipped for paths outside the project root (${this.config.projectRoot}).`
+            );
+          }
         }
 
         return {
-          content: [
-            {
-              type: "text" as const,
-              text: `Indexing complete:\n- Files indexed: ${totalFiles}\n- Chunks created: ${totalChunks}\n- Time: ${totalTime}ms\n- Extensions: ${exts.join(", ")}`
-            }
-          ]
+          content: [{ type: "text" as const, text: lines.join("\n") }]
         };
       }
     );

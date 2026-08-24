@@ -4,6 +4,18 @@ import { getParserForFile } from "./parsers";
 import { FileScanner, type ScannedFile, type FileScannerOptions } from "./scanner";
 import type { CodeChunk, IndexFilesResult, IndexDiffResult } from "../types";
 
+export interface IndexFilesOptions {
+  /**
+   * Drop index entries for files that were not part of this scan.
+   *
+   * Only safe when `files` is a COMPLETE scan of the project root: pruning
+   * compares the scan against the whole index, so a partial scan would delete
+   * everything it didn't happen to cover. Callers are responsible for that
+   * guarantee — see the project-root check in the CLI and MCP `index_files`.
+   */
+  prune?: boolean;
+}
+
 export class CodeChunker {
   private db: MemoryDatabase;
   private embeddings: EmbeddingManager;
@@ -13,7 +25,7 @@ export class CodeChunker {
     this.embeddings = embeddings;
   }
 
-  async indexFiles(files: ScannedFile[]): Promise<IndexFilesResult> {
+  async indexFiles(files: ScannedFile[], options: IndexFilesOptions = {}): Promise<IndexFilesResult> {
     const startTime = Date.now();
     let filesIndexed = 0;
     let chunksCreated = 0;
@@ -28,13 +40,47 @@ export class CodeChunker {
       }
     }
 
+    const prunedPaths = options.prune ? this.pruneMissingFiles(files) : [];
+
     this.db.markIndexRun();
 
     return {
       files_indexed: filesIndexed,
       chunks_created: chunksCreated,
-      time_ms: Date.now() - startTime
+      time_ms: Date.now() - startTime,
+      files_pruned: prunedPaths.length,
+      pruned_paths: prunedPaths
     };
+  }
+
+  /**
+   * Remove index entries whose files were not seen in this scan — i.e. deleted,
+   * renamed, or newly excluded (gitignored, or dropped from `extensions`).
+   *
+   * A full `index` run is content-hash-aware and skips unchanged files, but it
+   * had no way to notice a file that simply stopped existing, so stale chunks
+   * kept scoring in every search. Measured on a real project: 31 phantom files
+   * carrying 274 chunks, surfacing in 16% of code results — some at full
+   * expansion, handing the agent the contents of a deleted file.
+   */
+  private pruneMissingFiles(files: ScannedFile[]): string[] {
+    // An empty scan is far more likely a misconfiguration (wrong --extensions,
+    // wrong cwd, ignore glob swallowing the tree) than a project where every
+    // file was deleted. Refuse to wipe the index on that signal.
+    if (files.length === 0) {
+      console.error("Skipping prune: the scan matched no files, which would empty the index.");
+      return [];
+    }
+
+    const scanned = new Set(files.map((f) => f.relativePath));
+    const pruned: string[] = [];
+
+    for (const filepath of this.db.listCodeFilepaths()) {
+      if (scanned.has(filepath)) continue;
+      if (this.db.deleteCodeFile(filepath)) pruned.push(filepath);
+    }
+
+    return pruned;
   }
 
   async indexFile(file: ScannedFile): Promise<number> {
