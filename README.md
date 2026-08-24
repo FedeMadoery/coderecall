@@ -183,6 +183,24 @@ Pruning is deliberately **skipped for scoped scans** (`coderecall index ./src`) 
 | You changed `extensions` or `ignore` in config | `rm -rf .coderecall && coderecall index` |
 | You changed `embeddingModel` | `rm -rf .coderecall && coderecall index` |
 
+### Vector search is brute force, on purpose
+
+Cosine similarity runs over every stored vector from an in-memory cache. That
+is linear in index size — measured ~0.7 ms at 2.4k vectors, ~2.7 ms at 10k,
+~28 ms at 100k — and the cache holds `dim x 4` bytes per vector (~147 MB at
+100k x 384).
+
+`sqlite-vec` was measured as the alternative and rejected. Its `vec0` is also a
+linear scan (C with SIMD, not an approximate index), so it is O(N) too and came
+out just **1.15-1.24x** faster from 2.4k to 100k vectors. In a real query the
+cosine scan is 0.79 ms out of 6.5 ms — the query embedding alone costs 2.84 ms —
+so that 20% applies to 12% of the work. It would also require a system SQLite
+compiled with extension loading, since Bun's bundled build refuses
+`loadExtension`; that trades the zero-setup install for ~1.5% per query.
+
+If an index ever grows past ~100k chunks, the fix is a genuine approximate
+index or narrower vectors, not sqlite-vec.
+
 ### Staleness alerts
 
 The server tracks **when the last full index run completed** and surfaces age in every search response. Two thresholds are configurable in `.coderecall.json`:
@@ -247,7 +265,7 @@ No file watcher is built in — re-indexing while a tool is reading from the DB 
 | **Git history** | commits · file_history · blame · commit_detail — read live, no index |
 | **Intent routing** | `auto` / `definition` / `topic` → per-intent retrieval profile |
 | **Confidence-tiered retrieval** | pool → scoring → live diversity penalty → tiered expansion |
-| **Hybrid search** | FTS5 (porter, absolute BM25) + cosine 384-D |
+| **Hybrid search** | FTS5 (porter, absolute BM25) + brute-force cosine 384-D |
 | **Indexing** | scanner → parsers → chunker → embeddings |
 | **SQLite** | knowledge_entries · code_files · code_chunks · embeddings · memory_fts |
 

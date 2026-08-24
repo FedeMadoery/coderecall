@@ -380,6 +380,23 @@ export class HybridSearch {
     return words.map((w) => `${w}*`).join(" OR ");
   }
 
+  /**
+   * Cosine similarity over every stored vector, from an in-memory cache.
+   *
+   * Brute force, deliberately. sqlite-vec was measured as the alternative and
+   * it is not a win here: its `vec0` is also a linear scan (in C with SIMD,
+   * not an ANN index), so both approaches are O(N) and it came out only
+   * 1.15-1.24x faster across 2.4k to 100k vectors. On a real corpus the cosine
+   * scan is 0.79 ms of a 6.5 ms query — the query embedding costs 2.84 ms — so
+   * a 20% saving on that component is ~1.5% end to end, in exchange for
+   * requiring a system SQLite built with extension loading (Bun's bundled one
+   * refuses `loadExtension` outright).
+   *
+   * The scan is linear, so cost grows with the index: ~0.7 ms at 2.4k vectors,
+   * ~2.7 ms at 10k, ~28 ms at 100k, with the cache holding dim x 4 bytes per
+   * vector (~147 MB at 100k x 384). Past that, the answer is not sqlite-vec —
+   * still O(N) — but a real approximate index or narrower vectors.
+   */
   private async vectorSearch(
     query: string,
     limit: number

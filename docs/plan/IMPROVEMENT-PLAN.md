@@ -665,9 +665,42 @@ distribution would have to be thrown away after a model swap.
 
 ## Documentation debt to settle at the end
 
-- Remove or wire up `sqlite-vec` — it is a declared dependency that no source
-  file imports. `vectorSearch` brute-forces cosine over every cached vector.
-  Fine at 5k chunks; state the limit or fix it, but stop shipping the implication.
+- ~~Remove or wire up `sqlite-vec`~~ **Resolved 2026-08-24: removed, with the
+  decision measured.**
+
+  Three dependencies were declared and never imported: `sqlite-vec`,
+  `better-sqlite3`, and `@types/better-sqlite3`. All three are gone.
+
+  `sqlite-vec` was evaluated properly rather than dropped on a hunch:
+
+  | vectors | JS brute force | sqlite-vec `vec0` | speedup |
+  |---|---|---|---|
+  | 2,379 (real corpus) | 0.66 ms | 0.58 ms | 1.15x |
+  | 10,000 | 2.68 ms | 2.35 ms | 1.14x |
+  | 50,000 | 13.85 ms | 11.24 ms | 1.23x |
+  | 100,000 | 28.05 ms | 22.70 ms | 1.24x |
+
+  Both scale linearly, which is the key finding: **`vec0` in 0.1.9 is a
+  brute-force scan in C with SIMD, not an approximate index.** It is a constant
+  factor, not an algorithmic change.
+
+  And it applies to a small slice. Profiling a real query: full `tieredSearch`
+  6.47 ms, of which the cosine scan is 0.79 ms and the *query embedding* is
+  2.84 ms. A 20% saving on 12% of the work is ~1.5% end to end.
+
+  Feasibility was also worse than expected. Bun's bundled SQLite refuses
+  `loadExtension` outright ("does not support dynamic extension loading"). It
+  can be made to work via `Database.setCustomSQLite()` pointed at a system
+  SQLite built with extension support — verified against Homebrew's — but that
+  means a platform-specific external dependency, which is a poor trade for
+  1.5% in a tool whose pitch is vendoring with no setup. `better-sqlite3`,
+  which does support extensions, **is not supported in Bun at all**, so that
+  route is closed too.
+
+  The scan's real limits are now documented in the README and at the call site
+  instead of implied by an unused dependency. Past ~100k chunks the answer is a
+  genuine approximate index or narrower vectors — not sqlite-vec, which is
+  still O(N).
 - Add code-memory to the README comparison table with an honest split: they win
   AST depth, symbol references, and code-trained embeddings; coderecall wins the
   knowledge store, footprint, and tiered expansion.
