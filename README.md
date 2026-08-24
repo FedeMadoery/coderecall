@@ -25,18 +25,38 @@
 
 ## How it compares
 
-| | **coderecall** | claude-context | basic-memory | continue.dev `@codebase` |
-|---|---|---|---|---|
-| Local-only, no API key | ✅ | ❌ (needs embedder + Milvus) | ✅ | ✅ (deprecated) |
-| Indexes code | ✅ | ✅ | ❌ | ✅ |
-| Stores notes / decisions alongside code | ✅ | ❌ | ✅ (separate) | ❌ |
-| Single-file SQLite — no daemon, no Docker | ✅ | ❌ | ❌ | ❌ |
-| Tells the agent when the index is stale | ✅ | ❌ | ❌ | ❌ |
-| `git diff` aware incremental reindex | ✅ | partial | n/a | ❌ |
-| Removes deleted/renamed files from the index | ✅ | ❌ | n/a | ❌ |
-| Searches git history (commits, blame) | ✅ | ❌ | ❌ | ❌ |
-| Retrieval tuned against a labelled query set | ✅ | ❌ | ❌ | ❌ |
-| Works with any MCP client | ✅ | ✅ | ✅ | ❌ (VS Code extension) |
+| | **coderecall** | code-memory | claude-context | basic-memory | continue.dev `@codebase` |
+|---|---|---|---|---|---|
+| Local-only, no API key | ✅ | ✅ | ❌ (needs embedder + Milvus) | ✅ | ✅ (deprecated) |
+| Indexes code | ✅ | ✅ | ✅ | ❌ | ✅ |
+| Stores notes / decisions alongside code | ✅ | ❌ | ❌ | ✅ (separate) | ❌ |
+| Single-file SQLite — no daemon, no Docker | ✅ | ✅ | ❌ | ❌ | ❌ |
+| Searches git history (commits, blame) | ✅ | ✅ | ❌ | ❌ | ❌ |
+| Tells the agent when the index is **stale** | ✅ | cold start only | ❌ | ❌ | ❌ |
+| `git diff` aware incremental reindex | ✅ | skips unchanged | partial | n/a | ❌ |
+| Removes deleted/renamed files from the index | ✅ | — | ❌ | n/a | ❌ |
+| Retrieval tuned against a labelled query set | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Embedding model download | **34 MB** | ~600 MB | n/a (hosted) | n/a | — |
+| Real AST parsers (symbol-accurate chunks) | ❌ regex, 6 languages | ✅ tree-sitter, 8 languages | — | n/a | — |
+| Symbol references / call graph | ❌ | ✅ | — | n/a | — |
+| Finds unused code | ❌ | ✅ | ❌ | ❌ | ❌ |
+| Works with any MCP client | ✅ | ✅ | ✅ | ✅ | ❌ (VS Code extension) |
+
+`—` means not verified rather than absent.
+
+**On code-memory specifically** ([kapillamba4/code-memory](https://github.com/kapillamba4/code-memory)):
+it is the closest neighbour and it wins where it counts for structural
+questions. Its tree-sitter parsers give symbol-accurate chunks, real reference
+lookup, and dead-code detection — none of which regex parsers can honestly
+offer. It is a **code intelligence** layer.
+
+coderecall is a **repo memory** layer: it keeps the decisions and patterns
+alongside the code, rations the context budget by confidence, and fits in
+34 MB. Different products that look alike from the outside.
+
+Its embedding model was benchmarked here directly, and lost on this corpus —
+see `docs/plan/IMPROVEMENT-PLAN.md` for the numbers, including the part where
+it was *better* than the default at symbol-level precision.
 
 ---
 
@@ -85,53 +105,148 @@ git commit -m "Add coderecall MCP server"
 
 Add this to your project's `CLAUDE.md` so the agent reaches for the tool first:
 
-```md
+````md
 ## Code Memory
 
-Before reading source files directly, **search the index first**:
+This repo has a local searchable index of its own code and accumulated
+decisions. **Search it before reading source files directly.**
 
-  mcp__coderecall__search("how does authentication work")
+### Available MCP Tools
 
-- Looking up a specific symbol? Pass `search_type: "definition"` — it narrows
-  the search and returns exact name matches in full.
-- Conceptual question? `search_type: "topic"` (or omit it; the shape of the
-  query is inferred).
-- Narrow by kind with `filter: "code"` or `filter: "knowledge"`.
+| Tool | Purpose |
+|------|---------|
+| `mcp__coderecall__search` | **Default.** Intent-routed, confidence-tiered search over code and knowledge. |
+| `mcp__coderecall__search_history` | Git history — commits, a file's history, blame, one commit's detail. Needs no index, never stale. |
+| `mcp__coderecall__add_knowledge` | Record a decision, pattern, or gotcha so it survives past this session. |
+| `mcp__coderecall__list_knowledge` | Browse stored entries by category or tag. |
+| `mcp__coderecall__get_file_context` | Every chunk in one file, with line ranges and signatures. |
+| `mcp__coderecall__index_files` | Reindex after editing files. |
+| `mcp__coderecall__index_diff` | Reindex only what changed between two git refs. |
+| `mcp__coderecall__get_index_stats` | File, chunk, and knowledge counts, plus last-indexed time. |
 
-The index covers this repo's code plus any knowledge entries added via
-`add_knowledge`.
+### Examples
 
-**For questions about change over time, use git history instead** — it needs no
-index and is never stale:
+Conceptual question — searches wide, leans on meaning over wording:
 
-  mcp__coderecall__search_history({ mode: "commits", query: "rate limit" })
-  mcp__coderecall__search_history({ mode: "file_history", path: "src/auth.ts" })
-  mcp__coderecall__search_history({ mode: "blame", path: "src/auth.ts",
-                                    line_start: 40, line_end: 60 })
-
-Reach for it on "when did this change", "why was this added", "who last touched
-these lines".
-
-**Write down decisions as you make them** with `add_knowledge` — architecture
-choices, rejected alternatives, and the reasoning behind them. That is the part
-of a repo that cannot be reconstructed from the source later.
 ```
+search({ query: "how does authentication work" })
+```
+
+Specific symbol — narrows the search and expands exact name matches in full:
+
+```
+search({ query: "TokenRefreshService", search_type: "definition" })
+```
+
+Architecture and decisions only, skipping the code — use this for "why is it
+built this way", conventions, and rejected alternatives:
+
+```
+search({ query: "why did we choose this queue", filter: "knowledge" })
+list_knowledge({ category: "decision" })
+```
+
+Established patterns, so new code matches what is already there:
+
+```
+search({ query: "error handling pattern for API routes", filter: "knowledge" })
+list_knowledge({ category: "pattern" })
+```
+
+Code only, when prose entries would be noise:
+
+```
+search({ query: "retry with exponential backoff", filter: "code" })
+```
+
+Change over time — reach for these on "when did this change", "why was this
+added", "who last touched these lines":
+
+```
+search_history({ mode: "commits", query: "rate limit" })
+search_history({ mode: "file_history", path: "src/auth.ts" })
+search_history({ mode: "blame", path: "src/auth.ts", line_start: 40, line_end: 60 })
+```
+
+Recording a decision as you make it:
+
+```
+add_knowledge({
+  title: "Queue: Redis Streams over SQS",
+  category: "decision",
+  content: "Chose Redis Streams because we already run Redis and need
+            sub-second fan-out. SQS was rejected on latency, not cost.",
+  tags: ["queue", "infra"]
+})
+```
+
+### Notes
+
+- `search` infers intent from the query shape, so `search_type` is an
+  optimisation rather than a requirement.
+- Results come back tiered: full content for high-confidence hits, a signature
+  plus docstring for medium, metadata only for the rest. Re-run with
+  `expansion_mode: "all"` if you need everything expanded.
+- If a response opens with a staleness banner, the index is old — run
+  `index_files` before trusting it.
+- Write down architecture choices, rejected alternatives, and the reasoning
+  behind them. That is the part of a repo nobody can reconstruct from the
+  source later.
+````
 
 ---
 
-## MCP tools exposed
+## Available MCP tools
 
 | Tool | Purpose |
-|---|---|
-| `search` | Intent-routed, confidence-tiered search — returns full / summary / metadata tiers. **Use this by default.** |
-| `search_memory` | Same hybrid search, always returns full content. |
+|------|---------|
+| `search` | Intent-routed, confidence-tiered search over code and knowledge — returns full / summary / metadata tiers. **Use this by default.** |
+| `search_history` | Git-backed history — commit messages, a file's commits, blame, or one commit's detail. **No index, never stale.** |
 | `add_knowledge` | Store a knowledge entry (`architecture` / `decision` / `pattern` / `note` / `troubleshooting`). |
 | `list_knowledge` | List entries, optionally filtered by category or tag. |
+| `get_file_context` | List every chunk in a file with line ranges and signatures. |
 | `index_files` | Index a path. Defaults to extensions from `.coderecall.json`. Pass `prune: true` on a project-root reindex to also drop deleted files. |
 | `index_diff` | Index only files changed between two git refs — fastest way to refresh after a branch switch or `git pull`. |
-| `get_file_context` | List every chunk in a file with line ranges and signatures. |
-| `search_history` | Git-backed history search — commit messages, a file's commits, blame, or one commit's detail. **No index, never stale.** |
 | `get_index_stats` | File count, chunk count, knowledge count, last-indexed timestamp. |
+| `search_memory` | Legacy: the same hybrid search with no tiering, always full content. Prefer `search`. |
+
+### Examples
+
+```js
+// Conceptual question — searches wide, matches on meaning rather than wording.
+search({ query: "how does authentication work" })
+
+// A specific symbol — narrows the search and expands exact name matches in full.
+search({ query: "TokenRefreshService", search_type: "definition" })
+
+// Architecture and decisions only, skipping code: "why is it built this way".
+search({ query: "why did we choose this queue", filter: "knowledge" })
+list_knowledge({ category: "decision" })
+
+// Established patterns, so new code matches what is already there.
+search({ query: "error handling pattern for API routes", filter: "knowledge" })
+list_knowledge({ category: "pattern" })
+
+// Code only, when prose entries would just be noise.
+search({ query: "retry with exponential backoff", filter: "code" })
+
+// Change over time: "when did this change", "who last touched these lines".
+search_history({ mode: "commits", query: "rate limit" })
+search_history({ mode: "file_history", path: "src/auth.ts" })
+search_history({ mode: "blame", path: "src/auth.ts", line_start: 40, line_end: 60 })
+
+// Record a decision while the reasoning is still fresh.
+add_knowledge({
+  title: "Queue: Redis Streams over SQS",
+  category: "decision",
+  content: "Chose Redis Streams because we already run Redis and need sub-second fan-out. SQS was rejected on latency, not cost.",
+  tags: ["queue", "infra"]
+})
+```
+
+`search_type` is optional — intent is inferred from the query shape, so passing
+it is an optimisation rather than a requirement. Pass `expansion_mode: "all"` to
+override tiering and get every result in full.
 
 ---
 

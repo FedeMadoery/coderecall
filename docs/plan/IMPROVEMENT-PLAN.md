@@ -701,9 +701,12 @@ distribution would have to be thrown away after a model swap.
   instead of implied by an unused dependency. Past ~100k chunks the answer is a
   genuine approximate index or narrower vectors — not sqlite-vec, which is
   still O(N).
-- Add code-memory to the README comparison table with an honest split: they win
-  AST depth, symbol references, and code-trained embeddings; coderecall wins the
-  knowledge store, footprint, and tiered expansion.
+- ~~Add code-memory to the README comparison table~~ **Done 2026-08-24.** It is
+  a column now, including the four rows where it beats coderecall (AST parsers,
+  symbol references, dead-code detection, and — until measured — its
+  code-trained embeddings). Cells that were never verified are marked `—`
+  rather than assumed absent. Adding the git-history row without naming the one
+  competitor that also has it would have been marketing, not comparison.
 
 
 ---
