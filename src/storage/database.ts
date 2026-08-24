@@ -15,6 +15,7 @@ export class MemoryDatabase {
   // of re-reading every blob from SQLite.
   private embeddingsCache: CachedEmbedding[] | null = null;
   private embeddingsIndex: Map<string, number> = new Map();
+  private recordedEmbeddingStamp: string | null = null;
 
   constructor(dbPath: string) {
     this.db = new Database(dbPath, { create: true });
@@ -206,6 +207,12 @@ export class MemoryDatabase {
     vector: Float32Array,
     model: string = "Xenova/bge-small-en-v1.5"
   ) {
+    // Stamp which model actually produced the vectors in this index. Without
+    // this, a model or dimension swap is undetectable: cosineSimilarity throws
+    // on a width mismatch, vectorSearch swallows it, and search silently
+    // degrades to keyword-only.
+    this.recordEmbeddingModel(model, vector.length);
+
     const id = `emb_${Date.now()}_${randomUUID().slice(0, 8)}`;
     const vectorBuffer = Buffer.from(vector.buffer);
 
@@ -222,6 +229,56 @@ export class MemoryDatabase {
       .run(id, sourceType, sourceId, vectorBuffer, model);
 
     this.cacheUpsert(sourceType, sourceId, vector);
+  }
+
+  /** Remember the model + width behind this index. Cheap: writes only on change. */
+  private recordEmbeddingModel(model: string, dim: number) {
+    const stamp = `${model}:${dim}`;
+    if (this.recordedEmbeddingStamp === stamp) return;
+    this.setMeta("embedding_model", model);
+    this.setMeta("embedding_dim", String(dim));
+    this.recordedEmbeddingStamp = stamp;
+  }
+
+  /** The model + width this index was built with, if it has ever been stamped. */
+  getEmbeddingModelMeta(): { model: string | null; dim: number | null } {
+    const model = this.getMeta("embedding_model");
+    const rawDim = this.getMeta("embedding_dim");
+    return { model, dim: rawDim ? Number(rawDim) : null };
+  }
+
+  /**
+   * Is this index usable with the given model?
+   *
+   * A width mismatch is fatal for vector search but invisible at runtime, so it
+   * is worth an explicit up-front check. An empty index is always compatible.
+   * A same-width model change is reported too: the vectors are comparable in
+   * shape but not in meaning, so results would quietly get worse.
+   */
+  checkEmbeddingCompatibility(model: string, dim: number): { ok: boolean; reason?: string } {
+    const stored = this.db.prepare("SELECT vector FROM embeddings LIMIT 1").get() as any;
+    if (!stored) return { ok: true };
+
+    const storedDim = (stored.vector?.length ?? 0) / 4;
+    const meta = this.getEmbeddingModelMeta();
+
+    if (storedDim && storedDim !== dim) {
+      return {
+        ok: false,
+        reason:
+          `Index holds ${storedDim}-D vectors but ${model} produces ${dim}-D. ` +
+          `Vector search would fail silently. Delete the index and reindex.`
+      };
+    }
+    if (meta.model && meta.model !== model) {
+      return {
+        ok: false,
+        reason:
+          `Index was built with ${meta.model}, now configured for ${model}. ` +
+          `Same width, different meaning — reindex for correct results.`
+      };
+    }
+    return { ok: true };
   }
 
   getEmbedding(sourceId: string): Float32Array | null {

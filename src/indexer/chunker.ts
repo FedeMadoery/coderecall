@@ -173,7 +173,7 @@ export class CodeChunker {
       const chunk = chunks[i]!;
       const vector = vectors[i];
       if (!vector) continue;
-      this.db.saveEmbedding("code", chunk.id, vector);
+      this.db.saveEmbedding("code", chunk.id, vector, this.embeddings.getModelName());
       this.db.indexForFTS(
         chunk.id,
         "code",

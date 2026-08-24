@@ -270,7 +270,8 @@ All commands honor `CODERECALL_PROJECT_ROOT`, `CODERECALL_INDEX_PATH`, `CODERECA
 - `indexPath` — where the SQLite DB lives. Relative paths resolve from the project root.
 - `extensions` — what gets parsed. Anything not in the language registry falls back to a generic block chunker.
 - `ignore` — glob patterns excluded during scanning.
-- `embeddingModel` — defaults to `Xenova/bge-small-en-v1.5` (384-D, ~30 MB). Any other 384-D model is a drop-in. Switching to a different dimension (e.g. `Xenova/bge-base-en-v1.5` at 768-D) requires reindexing — old vectors are silently incompatible.
+- `embeddingModel` — defaults to `Xenova/bge-small-en-v1.5` (384-D, ~30 MB). The vector width is read from the model at load time, not assumed, and the model + width are stamped into the index. **Any model change requires a reindex** (`rm -rf .coderecall && coderecall index`): a different width breaks vector comparison outright, and a same-width model produces vectors that are comparable in shape but not in meaning. Either way coderecall now says so on startup instead of silently degrading to keyword-only search.
+- Retrieval models that are trained asymmetrically get their documented **query-side instruction prefix** applied automatically (BGE and arctic-embed families); symmetric models like the Jina v2 line get none. Documents are always embedded bare. `CODERECALL_QUERY_PREFIX` overrides this — set it to an empty string to disable prefixing.
 - `staleAfterDays` / `veryStaleAfterDays` — yellow / red staleness banner thresholds. Defaults: 14 / 30.
 
 </details>

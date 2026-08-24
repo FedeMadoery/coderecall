@@ -138,6 +138,13 @@ async function main() {
   const search = new HybridSearch(db, embeddings);
   const chunker = new CodeChunker(db, embeddings);
 
+  // A width mismatch makes vector search fail silently, so say so up front
+  // rather than letting results quietly degrade to keyword-only.
+  const compat = db.checkEmbeddingCompatibility(embeddings.getModelName(), embeddings.getDimension());
+  if (!compat.ok) {
+    console.error(`⚠️  Embedding model mismatch: ${compat.reason}`);
+  }
+
   try {
     switch (command) {
       case "index": {
@@ -285,7 +292,7 @@ async function main() {
         });
 
         const vector = await embeddings.embed(`${entry.title}\n${entry.content}`);
-        db.saveEmbedding("knowledge", entry.id, vector);
+        db.saveEmbedding("knowledge", entry.id, vector, embeddings.getModelName());
         db.indexForFTS(entry.id, "knowledge", entry.title, entry.content);
         console.log(`\nKnowledge entry created: ${entry.id}`);
         break;

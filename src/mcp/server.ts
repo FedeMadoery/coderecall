@@ -137,7 +137,7 @@ export class CoderecallServer {
         const entry = this.db.addKnowledge({ title, content, category, tags });
 
         const vector = await this.embeddings.embed(`${title}\n${content}`);
-        this.db.saveEmbedding("knowledge", entry.id, vector);
+        this.db.saveEmbedding("knowledge", entry.id, vector, this.embeddings.getModelName());
 
         this.db.indexForFTS(entry.id, "knowledge", title, content);
 
@@ -391,6 +391,14 @@ export class CoderecallServer {
 
   async run() {
     await this.embeddings.init();
+
+    // Fail loudly on a model/width mismatch. Left unchecked, cosineSimilarity
+    // throws inside vectorSearch, the error is swallowed, and every search
+    // silently degrades to keyword-only for the life of the server.
+    const compat = this.db.checkEmbeddingCompatibility(this.embeddings.getModelName(), this.embeddings.getDimension());
+    if (!compat.ok) {
+      console.error(`⚠️  Embedding model mismatch: ${compat.reason}`);
+    }
 
     const warm = this.db.warmEmbeddingsCache();
     if (warm.loaded > 0) {

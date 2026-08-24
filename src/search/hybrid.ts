@@ -339,7 +339,8 @@ export class HybridSearch {
 
     try {
       // Get query embedding
-      const queryVector = await this.embeddings.embed(query);
+      // Query side: applies the model's instruction prefix (asymmetric retrieval).
+      const queryVector = await this.embeddings.embedQuery(query);
 
       // Get all embeddings from database
       const allEmbeddings = this.db.getAllEmbeddings();

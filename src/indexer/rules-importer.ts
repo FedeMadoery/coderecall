@@ -284,7 +284,7 @@ export class RulesImporter {
     // Generate embedding
     const textForEmbedding = `${section.title}\n\n${section.content.slice(0, 8000)}`;
     const vector = await this.embeddings.embed(textForEmbedding);
-    this.db.saveEmbedding("knowledge", entry.id, vector);
+    this.db.saveEmbedding("knowledge", entry.id, vector, this.embeddings.getModelName());
 
     // Index for FTS
     this.db.indexForFTS(entry.id, "knowledge", section.title, section.content);

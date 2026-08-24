@@ -345,7 +345,7 @@ export class MarkdownImporter {
     // Generate embedding
     const textForEmbedding = `${file.title}\n\n${file.content.slice(0, 8000)}`; // Limit for embedding
     const vector = await this.embeddings.embed(textForEmbedding);
-    this.db.saveEmbedding("knowledge", entry.id, vector);
+    this.db.saveEmbedding("knowledge", entry.id, vector, this.embeddings.getModelName());
 
     // Index for FTS
     this.db.indexForFTS(entry.id, "knowledge", file.title, file.content);
