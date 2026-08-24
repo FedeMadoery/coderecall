@@ -10,6 +10,8 @@ import { CodeChunker } from "../indexer/chunker";
 import { FileScanner } from "../indexer/scanner";
 import type { ExpansionMode, IndexFreshness, TieredResult } from "../types";
 import type { SearchType } from "../search/profiles";
+import { GitHistory, DEFAULT_LIMIT, MAX_LIMIT, type CommitSummary, type HistoryResult } from "../git/history";
+import { GitError } from "../git/exec";
 import type { CoderecallConfig } from "../config";
 
 function freshnessBanner(f: IndexFreshness): string {
@@ -19,6 +21,15 @@ function freshnessBanner(f: IndexFreshness): string {
   if (f.status === "fresh") return "";
   const icon = f.status === "very_stale" ? "🔴" : "🟡";
   return `${icon} Index is ${f.daysOld} days old (threshold: ${f.staleAfterDays}d). Consider \`coderecall index\` to refresh.`;
+}
+
+function formatCommits(result: HistoryResult<CommitSummary>, heading: string): string {
+  if (result.entries.length === 0) return `${heading}: none found.`;
+  const lines = result.entries.map((c) => `  ${c.shortSha}  ${c.date.slice(0, 10)}  ${c.author}: ${c.subject}`);
+  const notes: string[] = [];
+  if (result.truncated) notes.push("more results exist — raise `limit` to see them");
+  if (result.shallow) notes.push("shallow clone: history is truncated, results may be incomplete");
+  return [`${heading}:`, ...lines, notes.length ? `\n(${notes.join("; ")})` : ""].filter(Boolean).join("\n");
 }
 
 function withBanner(banner: string, body: string): string {
@@ -309,6 +320,80 @@ export class CoderecallServer {
             }
           ]
         };
+      }
+    );
+
+    this.mcpServer.registerTool(
+      "search_history",
+      {
+        description:
+          "Search git history: commit messages, a file's commits, or line-by-line blame. Reads git directly — no index, so it is never stale and needs no reindex. Use it for 'when did this change', 'why was this added', 'who last touched these lines'.",
+        inputSchema: {
+          mode: z
+            .enum(["commits", "file_history", "blame", "commit_detail"])
+            .default("commits")
+            .describe(
+              "'commits' searches commit messages for a literal string. 'file_history' lists commits touching one path. 'blame' shows who last changed a line range. 'commit_detail' shows one commit's message and change stat."
+            ),
+          query: z
+            .string()
+            .optional()
+            .describe("Search string, for mode 'commits'. Matched literally, not as a regex."),
+          path: z.string().optional().describe("Repository-relative file path, for 'file_history' and 'blame'"),
+          rev: z.string().optional().describe("Commit-ish, for 'commit_detail' (a SHA, tag, or HEAD~2)"),
+          line_start: z.number().optional().describe("First line, for 'blame'"),
+          line_end: z.number().optional().describe("Last line, for 'blame'"),
+          limit: z.number().optional().describe(`Max entries (default ${DEFAULT_LIMIT}, max ${MAX_LIMIT})`)
+        }
+      },
+      async (args) => {
+        const { mode = "commits", query, path, rev, line_start, line_end, limit } = args;
+        const history = new GitHistory(this.config.projectRoot);
+
+        try {
+          let text: string;
+
+          if (mode === "commits") {
+            if (!query) throw new GitError("mode 'commits' needs a query.");
+            const result = history.searchCommits(query, limit);
+            text = formatCommits(result, `Commits matching ${JSON.stringify(query)}`);
+          } else if (mode === "file_history") {
+            if (!path) throw new GitError("mode 'file_history' needs a path.");
+            const result = history.fileHistory(path, limit);
+            text = formatCommits(result, `Commits touching ${path}`);
+          } else if (mode === "blame") {
+            if (!path) throw new GitError("mode 'blame' needs a path.");
+            const result = history.blame(path, line_start, line_end);
+            const lines = result.entries.map(
+              (b) =>
+                `  ${String(b.lineNumber).padStart(5)} ${b.shortSha} ${b.date.slice(0, 10)} ${b.author}: ${b.content}`
+            );
+            text = [
+              `Blame for ${path}${line_start ? ` lines ${line_start}-${line_end ?? line_start}` : ""}:`,
+              ...lines,
+              result.truncated ? `\n(capped — pass line_start/line_end to widen the window)` : ""
+            ]
+              .filter(Boolean)
+              .join("\n");
+          } else {
+            if (!rev) throw new GitError("mode 'commit_detail' needs a rev.");
+            const result = history.commitDetail(rev);
+            const c = result.entries[0]!;
+            text = [
+              `${c.shortSha} ${c.subject}`,
+              `Author: ${c.author}   Date: ${c.date}`,
+              c.body ? `\n${c.body}${c.bodyTruncated ? "\n… (body truncated)" : ""}` : "",
+              c.stat ? `\n${c.stat}` : ""
+            ]
+              .filter(Boolean)
+              .join("\n");
+          }
+
+          return { content: [{ type: "text" as const, text }] };
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          return { content: [{ type: "text" as const, text: `History search failed: ${message}` }], isError: true };
+        }
       }
     );
 

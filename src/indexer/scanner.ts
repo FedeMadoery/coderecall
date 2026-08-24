@@ -1,7 +1,7 @@
 import { glob } from "glob";
 import { readFile } from "fs/promises";
 import { dirname, join, extname, relative, sep } from "path";
-import { execSync } from "child_process";
+import { assertSafeRev, GitError, isGitRepo, runGit, runGitRaw } from "../git/exec";
 import { languageForExtension } from "./parsers";
 import { DEFAULT_IGNORE } from "../config";
 import { minimatch } from "minimatch";
@@ -64,26 +64,13 @@ export class FileScanner {
 
   /** True if basePath is inside a git working tree. */
   private isGitRepo(): boolean {
-    try {
-      execSync("git rev-parse --is-inside-work-tree", {
-        cwd: this.basePath,
-        encoding: "utf-8",
-        stdio: ["ignore", "pipe", "ignore"]
-      });
-      return true;
-    } catch {
-      return false;
-    }
+    return isGitRepo(this.basePath);
   }
 
   /** Enumerate via git: tracked files + untracked-not-ignored. */
   private async scanViaGit(): Promise<ScannedFile[]> {
     // -z separates with NUL so paths with newlines/quotes are safe.
-    const out = execSync("git ls-files -z --cached --others --exclude-standard", {
-      cwd: this.basePath,
-      encoding: "buffer",
-      maxBuffer: 256 * 1024 * 1024
-    });
+    const out = runGitRaw(this.basePath, ["ls-files", "-z", "--cached", "--others", "--exclude-standard"]);
 
     const paths = out.toString("utf-8").split("\0").filter(Boolean);
 
@@ -206,10 +193,12 @@ export class FileScanner {
     deleted: string[];
   } {
     try {
-      const output = execSync(`git diff --name-status ${baseRef} ${headRef}`, {
-        cwd: this.basePath,
-        encoding: "utf-8"
-      });
+      // Refs arrive from MCP tool arguments, i.e. model output. Validated and
+      // passed as argv elements — never interpolated into a shell command.
+      assertSafeRev(baseRef, "base ref");
+      assertSafeRev(headRef, "head ref");
+
+      const output = runGit(this.basePath, ["diff", "--name-status", baseRef, headRef]);
 
       const added: string[] = [];
       const modified: string[] = [];
@@ -243,6 +232,9 @@ export class FileScanner {
 
       return { added, modified, deleted };
     } catch (err) {
+      // A rejected ref must not look like "nothing changed" — that would have
+      // index_diff report 0 added / 0 modified and call it a success.
+      if (err instanceof GitError) throw err;
       console.error("Failed to get git diff:", err);
       return { added: [], modified: [], deleted: [] };
     }

@@ -32,6 +32,7 @@
 | Tells the agent when the index is stale | ✅ | ❌ | ❌ | ❌ |
 | `git diff` aware incremental reindex | ✅ | partial | n/a | ❌ |
 | Removes deleted/renamed files from the index | ✅ | ❌ | n/a | ❌ |
+| Searches git history (commits, blame) | ✅ | ❌ | ❌ | ❌ |
 | Works with any MCP client | ✅ | ✅ | ✅ | ❌ (VS Code extension) |
 
 ---
@@ -105,6 +106,7 @@ this repo and any knowledge entries added via `add_knowledge`.
 | `index_files` | Index a path. Defaults to extensions from `.coderecall.json`. Pass `prune: true` on a project-root reindex to also drop deleted files. |
 | `index_diff` | Index only files changed between two git refs — fastest way to refresh after a branch switch or `git pull`. |
 | `get_file_context` | List every chunk in a file with line ranges and signatures. |
+| `search_history` | Git-backed history search — commit messages, a file's commits, blame, or one commit's detail. **No index, never stale.** |
 | `get_index_stats` | File count, chunk count, knowledge count, last-indexed timestamp. |
 
 ---
@@ -198,6 +200,27 @@ Past the first threshold, every search response prefixes a yellow banner:
 
 Past the second, it turns red. **The point is that the agent sees the warning** and can suggest a reindex instead of silently searching against a stale snapshot.
 
+### Git history needs no index
+
+`search_history` does not touch the index at all — it shells out to git. That
+makes it the one retrieval path that is never stale and needs no reindex, and it
+works on a repo you have not indexed yet.
+
+| Mode | Answers |
+|---|---|
+| `commits` | "when did we change X" — literal search over commit messages |
+| `file_history` | every commit touching a path, following renames |
+| `blame` | who last changed lines N–M, and when |
+| `commit_detail` | one commit's message and per-file change stat |
+
+Output is budgeted on purpose: subject lines by default (20, max 100), blame
+capped to a 200-line window, `commit_detail` showing a diffstat rather than the
+patch, and truncation reported rather than hidden. Shallow clones are flagged,
+since their answers are necessarily partial.
+
+All git calls pass arguments as an argv array with no shell, and revisions are
+validated — a ref can never be read as a flag or smuggle a shell command.
+
 ### Knowledge entries
 
 Knowledge entries created via `add_knowledge`, `import-obsidian`, or `import-knowledge-file` are embedded **the moment they're added** — no separate reindex step. They live in the same SQLite DB and are searched alongside code by default.
@@ -221,6 +244,7 @@ No file watcher is built in — re-indexing while a tool is reading from the DB 
 | Layer | What it does |
 |---|---|
 | **MCP tools** | search · add_knowledge · index_files · index_diff · get_file_context · get_index_stats |
+| **Git history** | commits · file_history · blame · commit_detail — read live, no index |
 | **Intent routing** | `auto` / `definition` / `topic` → per-intent retrieval profile |
 | **Confidence-tiered retrieval** | pool → scoring → live diversity penalty → tiered expansion |
 | **Hybrid search** | FTS5 (porter, absolute BM25) + cosine 384-D |
@@ -242,6 +266,10 @@ coderecall index [path] [--extensions ".ext1,.ext2"] [--no-git-ls] [--no-prune]
 coderecall index-diff [path] --base HEAD~1 --head HEAD
 coderecall search "<query>" [--filter code|knowledge] [--limit 10] [--expansion selective|all|metadata_only] [--search-type auto|definition|topic]
 coderecall search-legacy "<query>"       # full-expansion mode (no tiering)
+coderecall history "<search string>"                                  # search commit messages
+coderecall history <path> --mode file_history [--limit 20]
+coderecall history <path> --mode blame [--from N] [--to M]
+coderecall history <rev> --mode commit_detail
 coderecall stats
 coderecall add-knowledge                 # interactive
 coderecall list-knowledge [--category X] [--tag Y]

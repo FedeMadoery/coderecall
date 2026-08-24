@@ -11,6 +11,7 @@ import type { LanguagePreset } from "../src/config";
 
 import type { ExpansionMode, IndexFreshness } from "../src/types";
 import type { SearchType } from "../src/search/profiles";
+import { GitHistory, type CommitSummary, type HistoryResult } from "../src/git/history";
 import { join, resolve, isAbsolute, dirname, relative, sep } from "path";
 import { mkdirSync, existsSync, readFileSync, writeFileSync, statSync } from "fs";
 import { fileURLToPath } from "url";
@@ -36,6 +37,7 @@ Commands:
   index-diff [path]         Index only changed files (git diff)
   search <query>            Search the index (confidence-tiered expansion)
   search-legacy <query>     Search with full expansion (no tiering)
+  history <arg>             Search git history (no index needed; see History options)
   stats                     Show index statistics
   add-knowledge             Add a knowledge entry (interactive)
   import-obsidian --vault <path>      Import knowledge from an Obsidian vault
@@ -59,6 +61,11 @@ Indexing options:
   --base <ref>              Base git ref for diff (default: HEAD~1)
   --head <ref>              Head git ref for diff (default: HEAD)
 
+History options:
+  --mode <mode>             commits | file_history | blame | commit_detail  (default: commits)
+  --from <n> / --to <m>     Line range, for --mode blame
+  --limit <n>               Max entries (default 20, max 100)
+
 Search options:
   --filter <type>           all | code | knowledge
   --limit <n>               Limit results (default: 10)
@@ -70,6 +77,9 @@ Examples:
   coderecall index                         # uses extensions from .coderecall.json
   coderecall index ./src --extensions .py
   coderecall search "how does auth work"
+  coderecall history "fix login"                          # search commit messages
+  coderecall history src/auth.ts --mode file_history
+  coderecall history src/auth.ts --mode blame --from 40 --to 60
   coderecall stats
 `);
 }
@@ -135,17 +145,24 @@ async function main() {
 
   const db = new MemoryDatabase(dbPath);
   const embeddings = new EmbeddingManager(config.embeddingModel);
-  await embeddings.init();
+
+  // Loading the model costs a few seconds and ~34 MB. Commands that never
+  // embed anything should not pay it — `history` in particular reads git
+  // directly and touches neither the index nor the model.
+  const NEEDS_NO_EMBEDDINGS = new Set(["history", "stats", "list-knowledge"]);
+  if (!NEEDS_NO_EMBEDDINGS.has(command)) {
+    await embeddings.init();
+
+    // A width mismatch makes vector search fail silently, so say so up front
+    // rather than letting results quietly degrade to keyword-only.
+    const compat = db.checkEmbeddingCompatibility(embeddings.getModelName(), embeddings.getDimension());
+    if (!compat.ok) {
+      console.error(`⚠️  Embedding model mismatch: ${compat.reason}`);
+    }
+  }
 
   const search = new HybridSearch(db, embeddings);
   const chunker = new CodeChunker(db, embeddings);
-
-  // A width mismatch makes vector search fail silently, so say so up front
-  // rather than letting results quietly degrade to keyword-only.
-  const compat = db.checkEmbeddingCompatibility(embeddings.getModelName(), embeddings.getDimension());
-  if (!compat.ok) {
-    console.error(`⚠️  Embedding model mismatch: ${compat.reason}`);
-  }
 
   try {
     switch (command) {
@@ -244,6 +261,51 @@ async function main() {
         } else {
           const results = await search.tieredSearch(query, filter, limit, expansion, searchType);
           renderTiered(results);
+        }
+        break;
+      }
+
+      case "history": {
+        const mode = ((parsed.flags["mode"] as string) || "commits") as
+          | "commits"
+          | "file_history"
+          | "blame"
+          | "commit_detail";
+        const history = new GitHistory(projectRoot);
+        const limit = parsed.flags["limit"] ? parseInt(parsed.flags["limit"] as string) : undefined;
+        const positional = parsed.positionals[0];
+
+        try {
+          if (mode === "commits") {
+            if (!positional) throw new Error('Usage: coderecall history "<search string>"');
+            const r = history.searchCommits(positional, limit);
+            renderCommits(r, `Commits matching "${positional}"`);
+          } else if (mode === "file_history") {
+            if (!positional) throw new Error("Usage: coderecall history <path> --mode file_history");
+            const r = history.fileHistory(positional, limit);
+            renderCommits(r, `Commits touching ${positional}`);
+          } else if (mode === "blame") {
+            if (!positional) throw new Error("Usage: coderecall history <path> --mode blame [--from N] [--to M]");
+            const from = parsed.flags["from"] ? parseInt(parsed.flags["from"] as string) : undefined;
+            const to = parsed.flags["to"] ? parseInt(parsed.flags["to"] as string) : undefined;
+            const r = history.blame(positional, from, to);
+            for (const b of r.entries) {
+              console.log(
+                `${String(b.lineNumber).padStart(5)} ${b.shortSha} ${b.date.slice(0, 10)} ${b.author}: ${b.content}`
+              );
+            }
+            if (r.truncated) console.log(`\n(capped — pass --from/--to to widen the window)`);
+          } else {
+            if (!positional) throw new Error("Usage: coderecall history <rev> --mode commit_detail");
+            const c = history.commitDetail(positional).entries[0]!;
+            console.log(`${c.shortSha} ${c.subject}`);
+            console.log(`Author: ${c.author}   Date: ${c.date}`);
+            if (c.body) console.log(`\n${c.body}${c.bodyTruncated ? "\n… (body truncated)" : ""}`);
+            if (c.stat) console.log(`\n${c.stat}`);
+          }
+        } catch (err) {
+          console.error(err instanceof Error ? err.message : String(err));
+          process.exitCode = 1;
         }
         break;
       }
@@ -606,6 +668,21 @@ function freshnessLine(f: IndexFreshness): string {
 }
 
 // ==================== rendering helpers ====================
+
+function renderCommits(result: HistoryResult<CommitSummary>, heading: string) {
+  if (result.entries.length === 0) {
+    console.log(`${heading}: none found.`);
+    return;
+  }
+  console.log(`${heading}:`);
+  for (const c of result.entries) {
+    console.log(`  ${c.shortSha}  ${c.date.slice(0, 10)}  ${c.author}: ${c.subject}`);
+  }
+  const notes: string[] = [];
+  if (result.truncated) notes.push("more results exist — raise --limit");
+  if (result.shallow) notes.push("shallow clone: history truncated, results may be incomplete");
+  if (notes.length) console.log(`\n(${notes.join("; ")})`);
+}
 
 function renderLegacy(results: any[]) {
   if (results.length === 0) {

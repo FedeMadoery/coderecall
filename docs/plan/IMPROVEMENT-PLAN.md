@@ -10,7 +10,7 @@ things being measured change.
 | 5 | Deletion/rename pruning in full `index` | ✅ **DONE** — 16% → 0% phantom results | shipped |
 | 1 | Embedding model | ✅ **DONE** — premise refuted; switched to arctic-embed-s instead | shipped |
 | 2 | Intent routing + tier recalibration | ✅ **DONE** — MRR 0.802→0.926, full precision 57→83% | shipped |
-| 3 | `search_history` (git-backed, index-free) | Independent; closes a visible gap vs code-memory | 1 d |
+| 3 | `search_history` (git-backed, index-free) | ✅ **DONE** — plus a live command injection closed | shipped |
 
 ---
 
@@ -551,6 +551,59 @@ regression test that a no-hit query still refuses to expand.
 ---
 
 ## Phase 3 — `search_history`: git-backed, no index
+
+> **Status: shipped 2026-08-24.** Four modes (`commits`, `file_history`,
+> `blame`, `commit_detail`) on the MCP tool and a `history` CLI command. 19
+> tests.
+>
+> ### The injection was live, and it is now proven closed
+>
+> `getChangedFiles` interpolated refs into `execSync`, and those refs arrive
+> from `index_diff`'s MCP arguments — i.e. model output. Before fixing it, this
+> was demonstrated end to end: passing `HEAD; touch <marker>` as `base_ref`
+> created the marker file. After the fix it throws and creates nothing, and a
+> regression test asserts exactly that.
+>
+> All git calls now go through `src/git/exec.ts`: argv arrays, no shell, plus
+> two validators for the hazards that outlive shell removal — a value starting
+> with `-` being read as a flag, and revision/pathspec confusion.
+>
+> A related flaw surfaced while fixing it: `getChangedFiles` caught every error
+> and returned empty arrays, so a *rejected* ref would have had `index_diff`
+> report "0 added, 0 modified" and call it a success. Validation errors now
+> propagate.
+>
+> ### Output budgets
+>
+> Subject lines only by default (20, max 100); `blame` capped to a 200-line
+> window; `commit_detail` returns a diffstat, never the patch; body truncated at
+> 4000 chars. Truncation and shallow clones are both reported rather than
+> silently changing the answer.
+>
+> ### Two bugs the tests caught
+>
+> - **`git show --stat --no-patch` returns no stat.** `--no-patch` suppresses
+>   the diffstat along with the patch, so `commitDetail` came back with an empty
+>   stat. `--stat --format=` is the correct pair.
+> - **Revision/pathspec ambiguity is real but was mis-diagnosed at first.** A
+>   `git show <rev>` was aborting with "ambiguous argument", which looked like a
+>   general requirement for a trailing `--`. It was not: a stray empty file
+>   named `HEAD`, left in the working tree by debugging, was colliding with the
+>   revision. `git show <rev>` is fine without `--` in a clean tree. The `--` is
+>   kept anyway — a repo can legitimately hold a file whose name matches a ref,
+>   and that is exactly when the failure would be confusing — but it is
+>   defensive practice, not a fix for a bug git has.
+>
+> ### Also
+>
+> The CLI no longer loads the embedding model for commands that never embed
+> anything (`history`, `stats`, `list-knowledge`). `history` went from ~4s to
+> 0.16s — fitting, for the one path that needs no index.
+>
+> `git log -S` (search diff content) stays out, as scoped: it is slow on large
+> repos and belongs behind its own mode if ever wanted.
+
+## Original research plan for Phase 3
 
 Pure win: no embeddings, no index, never stale. `FileScanner.getChangedFiles`
 already shells out to git, so the pattern exists.
