@@ -95,36 +95,30 @@ export class EmbeddingManager {
     return this.embed(this.queryPrefix + text);
   }
 
-  async embedBatch(texts: string[], batchSize: number = 8): Promise<Float32Array[]> {
+  /**
+   * Embed many documents.
+   *
+   * Deliberately one at a time. Passing an array to the pipeline pads every
+   * sequence in the group to the longest one, and code chunks are wildly
+   * uneven — measured p50 398 characters against a max of 8000 — so most of a
+   * batch is spent on padding. Measured on 300 real chunks with the default
+   * model: sequential 5.0s, batches of 4 8.8s, batches of 8 11.1s, batches of
+   * 16 15.7s. Sorting by length first only recovers part of it (6.0s), still
+   * behind sequential.
+   *
+   * CPU inference already saturates its threads on a single input, so grouping
+   * buys no parallelism and pays for the padding. Kept as one call per document
+   * until a measurement says otherwise.
+   */
+  async embedMany(texts: string[]): Promise<Float32Array[]> {
     if (!this.model) {
       await this.init();
     }
 
-    if (texts.length === 0) return [];
-
     const results: Float32Array[] = [];
-
-    for (let i = 0; i < texts.length; i += batchSize) {
-      const batch = texts.slice(i, i + batchSize);
-
-      const output = await this.model!(batch, {
-        pooling: "mean",
-        normalize: true
-      });
-
-      // Batched output shape is [batch, dim]; output.data is a flat Float32Array
-      // of length batch * dim. Slice into per-row Float32Arrays.
-      const flat = output.data as unknown as Float32Array;
-      const dim =
-        Array.isArray(output.dims) && output.dims.length >= 2
-          ? (output.dims[output.dims.length - 1] as number)
-          : flat.length / batch.length;
-
-      for (let j = 0; j < batch.length; j++) {
-        results.push(new Float32Array(flat.slice(j * dim, (j + 1) * dim)));
-      }
+    for (const text of texts) {
+      results.push(await this.embed(text));
     }
-
     return results;
   }
 

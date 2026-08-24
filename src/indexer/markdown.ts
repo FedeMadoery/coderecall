@@ -326,7 +326,7 @@ export class MarkdownImporter {
    */
   async saveToDatabase(file: MarkdownFile): Promise<void> {
     // Delete existing entry with same title (for updates)
-    const existing = this.db.listKnowledge().find((k) => k.title === file.title);
+    const existing = this.db.getKnowledgeByTitle(file.title);
     if (existing) {
       this.db.deleteKnowledge(existing.id);
     }

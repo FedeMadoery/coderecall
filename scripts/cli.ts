@@ -160,15 +160,19 @@ async function main() {
         console.log(`Extensions: ${extensions.join(", ")}`);
 
         const useGit = !parsed.flags["no-git-ls"];
-        const scanner = new FileScanner(absolutePath, { extensions, ignore: config.ignore, useGit });
+        const scanner = new FileScanner(absolutePath, {
+          extensions,
+          ignore: config.ignore,
+          useGit,
+          projectRoot
+        });
         const files = await scanner.scanAll();
         console.log(`Found ${files.length} files`);
 
         // Pruning compares the scan against the entire index, so it is only
-        // sound for a full project-root scan. A scoped run (`index ./src`) also
-        // stores paths relative to that subdirectory, which makes them
-        // indistinguishable from root-relative ones — another reason not to
-        // prune on anything but the root.
+        // sound for a full project-root scan: a partial scan cannot be told
+        // apart from a project that shrank. (Paths are now project-relative, so
+        // scoped pruning is implementable via a prefix filter — not done here.)
         const isFullScan = absolutePath === resolve(projectRoot);
         const pruneOptOut = "no-prune" in parsed.flags;
         const prune = isFullScan && !pruneOptOut;

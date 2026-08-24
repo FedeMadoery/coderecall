@@ -163,9 +163,9 @@ export class CodeChunker {
 
     let vectors: Float32Array[];
     try {
-      vectors = await this.embeddings.embedBatch(texts);
+      vectors = await this.embeddings.embedMany(texts);
     } catch (err) {
-      console.error(`Failed to embed batch of ${chunks.length} chunks:`, err);
+      console.error(`Failed to embed ${chunks.length} chunks:`, err);
       return;
     }
 
@@ -190,7 +190,9 @@ export class CodeChunker {
     scannerOptions: FileScannerOptions = {}
   ): Promise<IndexDiffResult> {
     const startTime = Date.now();
-    const scanner = new FileScanner(basePath, scannerOptions);
+    // git diff reports paths relative to the repo root, so that is the root
+    // stored paths must be relative to as well.
+    const scanner = new FileScanner(basePath, { projectRoot: basePath, ...scannerOptions });
 
     const { added, modified, deleted } = scanner.getChangedFiles(baseRef, headRef);
 

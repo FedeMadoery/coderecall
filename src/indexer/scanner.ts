@@ -1,6 +1,6 @@
 import { glob } from "glob";
 import { readFile } from "fs/promises";
-import { dirname, join, extname } from "path";
+import { dirname, join, extname, relative, sep } from "path";
 import { execSync } from "child_process";
 import { languageForExtension } from "./parsers";
 import { DEFAULT_IGNORE } from "../config";
@@ -18,6 +18,15 @@ export interface FileScannerOptions {
   ignore?: string[];
   /** If false, skip `git ls-files` even when in a git repo. Default true. */
   useGit?: boolean;
+  /**
+   * Root that stored paths are expressed relative to. Defaults to `basePath`.
+   *
+   * Set this whenever the scan covers a subdirectory: without it, scanning
+   * `<root>/frontend` records `src/api/foo.ts` rather than
+   * `frontend/src/api/foo.ts`, so a scoped index writes paths that collide with
+   * root-relative ones and cannot be told apart afterwards.
+   */
+  projectRoot?: string;
 }
 
 export class FileScanner {
@@ -25,6 +34,8 @@ export class FileScanner {
   private extensions: string[];
   private ignore: string[];
   private useGit: boolean;
+  /** Stored paths are relative to this, not necessarily to basePath. */
+  private projectRoot: string;
 
   constructor(basePath: string, options: FileScannerOptions | string[] = {}) {
     this.basePath = basePath;
@@ -33,10 +44,12 @@ export class FileScanner {
       this.extensions = options;
       this.ignore = DEFAULT_IGNORE;
       this.useGit = true;
+      this.projectRoot = basePath;
     } else {
       this.extensions = options.extensions ?? [".ts", ".tsx", ".js", ".jsx"];
       this.ignore = options.ignore ?? DEFAULT_IGNORE;
       this.useGit = options.useGit ?? true;
+      this.projectRoot = options.projectRoot ?? basePath;
     }
   }
 
@@ -134,18 +147,21 @@ export class FileScanner {
     return false;
   }
 
-  /** Read file contents for a list of relative paths. */
-  private async readFiles(relativePaths: string[]): Promise<ScannedFile[]> {
+  /**
+   * Read file contents for paths relative to `basePath`, storing each path
+   * relative to `projectRoot` so scoped and full scans agree on identity.
+   */
+  private async readFiles(baseRelativePaths: string[]): Promise<ScannedFile[]> {
     const files: ScannedFile[] = [];
-    for (const relativePath of relativePaths) {
-      const fullPath = join(this.basePath, relativePath);
+    for (const baseRelative of baseRelativePaths) {
+      const fullPath = join(this.basePath, baseRelative);
       try {
         const content = await readFile(fullPath, "utf-8");
         files.push({
           path: fullPath,
-          relativePath,
+          relativePath: this.toProjectRelative(fullPath),
           content,
-          language: languageForExtension(extname(relativePath))
+          language: languageForExtension(extname(baseRelative))
         });
       } catch {
         // Symlink target missing, binary file, or transient I/O error — skip quietly.
@@ -154,22 +170,27 @@ export class FileScanner {
     return files;
   }
 
-  async scanFiles(relativePaths: string[]): Promise<ScannedFile[]> {
+  /** Normalise an absolute path to a project-root-relative, forward-slashed path. */
+  private toProjectRelative(fullPath: string): string {
+    return relative(this.projectRoot, fullPath).split(sep).join("/");
+  }
+
+  async scanFiles(baseRelativePaths: string[]): Promise<ScannedFile[]> {
     const files: ScannedFile[] = [];
 
-    for (const relativePath of relativePaths) {
-      const fullPath = join(this.basePath, relativePath);
+    for (const baseRelative of baseRelativePaths) {
+      const fullPath = join(this.basePath, baseRelative);
       try {
         const content = await readFile(fullPath, "utf-8");
         files.push({
           path: fullPath,
-          relativePath,
+          relativePath: this.toProjectRelative(fullPath),
           content,
-          language: languageForExtension(extname(relativePath))
+          language: languageForExtension(extname(baseRelative))
         });
       } catch {
         // File might have been deleted
-        console.warn(`Could not read file: ${relativePath}`);
+        console.warn(`Could not read file: ${baseRelative}`);
       }
     }
 

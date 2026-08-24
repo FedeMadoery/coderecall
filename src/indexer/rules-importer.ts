@@ -265,7 +265,7 @@ export class RulesImporter {
 
   private async importSection(section: RulesSection): Promise<void> {
     // Delete existing entry with same title (for updates)
-    const existing = this.db.listKnowledge().find((k) => k.title === section.title);
+    const existing = this.db.getKnowledgeByTitle(section.title);
     if (existing) {
       this.db.deleteKnowledge(existing.id);
     }

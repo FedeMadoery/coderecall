@@ -17,7 +17,7 @@ const fakeEmbeddings = {
   init: async () => {},
   embed: async () => new Float32Array(384).fill(0.1),
   embedQuery: async () => new Float32Array(384).fill(0.1),
-  embedBatch: async (texts: string[]) => texts.map(() => new Float32Array(384).fill(0.1)),
+  embedMany: async (texts: string[]) => texts.map(() => new Float32Array(384).fill(0.1)),
   getModelName: () => "test/fake-embedder",
   getDimension: () => 384,
   getQueryPrefix: () => ""

@@ -307,12 +307,12 @@ reindex. Exit criterion is **0 phantom files, 0 dead chunks, 0% phantom results*
 >   silent-failure path where `cosineSimilarity` throws, `vectorSearch` swallows
 >   it, and search degrades to keyword-only for the life of the process.
 >
-> ### Found, not fixed
+> ### Found, then inverted
 >
-> Knowledge entries are embedded **one at a time** while code chunks go through
-> `embedBatch` — visible as 78 entries taking 285 s under jina vs 5 s under
-> arctic. Worth batching in `markdown.ts` / `rules-importer.ts` regardless of
-> model.
+> This phase flagged that knowledge entries were embedded one at a time while
+> code chunks went through `embedBatch`, and proposed batching the importers.
+> **Measurement reversed the conclusion** — see the follow-up section below. The
+> 285 s was jina being slow on long documents, not the call pattern.
 
 ## Original research plan
 
@@ -618,3 +618,64 @@ distribution would have to be thrown away after a model swap.
 - Add code-memory to the README comparison table with an honest split: they win
   AST depth, symbol references, and code-trained embeddings; coderecall wins the
   knowledge store, footprint, and tiered expansion.
+
+
+---
+
+## Follow-ups — the two "found, not fixed" items
+
+Both were fixed on 2026-08-24. One turned out to be the opposite of what the
+earlier phase assumed.
+
+### Batching was the problem, not the fix
+
+Phase 1 proposed batching the knowledge-entry embeds to match the code path.
+Measured first, and the premise collapsed:
+
+| workload | sequential | batched(8) |
+|---|---|---|
+| 78 knowledge entries, arctic-s | 4.2 s | 4.2 s |
+| 20 knowledge entries, jina | 17.3 s | 58.7 s |
+| 300 code chunks, arctic-s | **5.0 s** | 11.1 s |
+
+Batching is *slower*, and worst on exactly the workload already using it. ONNX
+pads every sequence in a group to the longest member, and chunk lengths are
+wildly uneven — measured p50 398 characters against a max of 8000 — so most of
+each batch is spent computing padding. CPU inference already saturates its
+threads on one input, so grouping buys no parallelism to offset it. Sorting by
+length first recovers only part of the loss (6.0 s, still behind sequential).
+
+So `embedBatch` became `embedMany`, implemented as one call per document. On the
+real corpus: **87.2 s → 47.5 s for 2,301 chunks (1.84×)**, with retrieval quality
+unchanged (MRR 0.928 vs 0.926 — float-level noise, so the attention mask was
+handling the padding correctly; it was pure wasted compute).
+
+The genuine inefficiency in the importers was different and unrelated to
+batching: `saveToDatabase` called `listKnowledge()` **per file** and scanned the
+result, loading and JSON-parsing every entry once per imported file. Replaced
+with an indexed `getKnowledgeByTitle()`.
+
+### Path relativity
+
+`FileScanner` stored paths relative to its scan base, so `index ./frontend`
+recorded `src/api/client.ts` instead of `frontend/src/api/client.ts` — paths
+indistinguishable from root-relative ones, and colliding with a genuine
+top-level `src/api/client.ts`. A scoped scan therefore inserted duplicate
+entries at wrong paths rather than recognising files the full scan had already
+indexed.
+
+`FileScanner` now takes a `projectRoot` and stores paths relative to it; the CLI,
+MCP `index_files`, and `indexDiff` all pass it. Verified end to end: a full scan
+followed by a scoped scan of one subdirectory leaves **387 files, not 473**.
+Omitting `projectRoot` keeps the old base-relative behaviour for back-compat.
+
+**Scoped pruning is now unblocked** — the reason it was dropped in Phase 5 was
+precisely this ambiguity. Still not implemented; it needs a prefix filter plus
+its own gating.
+
+### Measurement hazard worth remembering
+
+A plain `cp` of a WAL-mode `index.db` silently drops whatever is still in the
+`-wal` sidecar. That produced a copy missing 47 of 2,379 embeddings and read as
+a 20-point recall regression until row counts were compared. `tests/eval/README.md`
+now prescribes `sqlite3 … ".backup …"` and a row-count sanity check.

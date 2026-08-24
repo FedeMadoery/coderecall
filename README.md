@@ -158,7 +158,7 @@ The index is **local per developer**. `.coderecall/` is gitignored — vectors a
 coderecall index
 ```
 
-Scans the project, parses every file matching `extensions`, chunks it, embeds each chunk (384-D, batched), and stores everything in `.coderecall/index.db`. The first run also downloads the ~30 MB embedding model. Rough numbers on CPU: ~15–30 ms per chunk with batched embeddings; a 5,000-chunk repo finishes its first index in ~2–3 min.
+Scans the project, parses every file matching `extensions`, chunks it, embeds each chunk (384-D), and stores everything in `.coderecall/index.db`. The first run also downloads the ~34 MB embedding model. Measured on CPU against a 387-file, 2,301-chunk polyglot repo: **~48 s**, about 20 ms per chunk. Chunks are embedded one at a time on purpose — grouping them pads every sequence in the group to the longest, which measured 2.2× *slower* than sequential on real chunk-length distributions.
 
 **Which files get scanned.** In a git repo, the scanner uses `git ls-files` (tracked + untracked-but-not-gitignored) — so anything in your `.gitignore` is skipped automatically, including weirdly-named Python venvs (`api-venv/`, `my-env-3.11/`, etc.). Outside a git repo, it falls back to a glob walk using the `ignore` patterns in `.coderecall.json`; for Python projects it also detects venvs by their `pyvenv.cfg` marker so the directory name doesn't matter. Pass `--no-git-ls` to force the glob path.
 

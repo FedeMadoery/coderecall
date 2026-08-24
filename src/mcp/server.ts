@@ -235,7 +235,11 @@ export class CoderecallServer {
         let pruneSkipped = false;
 
         for (const basePath of paths) {
-          const scanner = new FileScanner(basePath, { extensions: exts, ignore: this.config.ignore });
+          const scanner = new FileScanner(basePath, {
+            extensions: exts,
+            ignore: this.config.ignore,
+            projectRoot: this.config.projectRoot
+          });
           const files = await scanner.scanAll();
 
           // Pruning compares the scan against the whole index, so it is only

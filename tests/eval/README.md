@@ -87,9 +87,18 @@ spending most of the context budget on wrong results.
 **Always measure against a copy.** Opening a developer's live index read-write
 risks their working index; the probes refuse to run against `<corpus>/.coderecall/index.db`.
 
+**Copy with `.backup`, not `cp`.** The index runs in WAL mode, so a plain `cp`
+of `index.db` silently leaves recent writes behind in the `-wal` sidecar. That
+produced a copy missing 47 of 2,379 embeddings once, which read as a 20-point
+recall regression until the row counts were checked.
+
 ```bash
 CORPUS=~/path/to/some/repo
-mkdir -p /tmp/eval && cp "$CORPUS/.coderecall/index.db" /tmp/eval/index.db
+mkdir -p /tmp/eval
+sqlite3 "$CORPUS/.coderecall/index.db" ".backup /tmp/eval/index.db"
+
+# Sanity-check the copy before trusting any measurement from it:
+sqlite3 /tmp/eval/index.db "select count(*) from embeddings;"
 
 PROBE_DB=/tmp/eval/index.db bun run tests/eval/probe-scores.ts     # score + tier distribution
 PROBE_DB=/tmp/eval/index.db bun run tests/eval/probe-phantoms.ts   # deleted-file pollution

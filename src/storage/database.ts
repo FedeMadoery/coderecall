@@ -58,6 +58,19 @@ export class MemoryDatabase {
     };
   }
 
+  /**
+   * Look up a knowledge entry by exact title.
+   *
+   * Importers use this to replace an entry on re-import. They previously called
+   * listKnowledge() per file and scanned the result, which loaded and
+   * JSON-parsed every entry once per imported file.
+   */
+  getKnowledgeByTitle(title: string): KnowledgeEntry | null {
+    const row = this.db.prepare("SELECT * FROM knowledge_entries WHERE title = ? LIMIT 1").get(title) as any;
+    if (!row) return null;
+    return { ...row, tags: JSON.parse(row.tags || "[]") };
+  }
+
   listKnowledge(category?: string, tag?: string): KnowledgeEntry[] {
     let query = "SELECT * FROM knowledge_entries WHERE 1=1";
     const params: any[] = [];
