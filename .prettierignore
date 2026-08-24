@@ -1,0 +1,11 @@
+# Markdown is intentionally hand-wrapped at ~80 columns (README.md,
+# docs/plan/IMPROVEMENT-PLAN.md, etc.). Running it through Prettier at
+# printWidth 120 would rewrap hand-built prose and tables into an
+# unreadable diff, so markdown stays hand-formatted, deliberately.
+*.md
+
+node_modules/
+bun.lock
+.coderecall/
+tests/eval/.local/
+templates/

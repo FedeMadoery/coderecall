@@ -66,20 +66,16 @@ export class FileScanner {
   /** Enumerate via git: tracked files + untracked-not-ignored. */
   private async scanViaGit(): Promise<ScannedFile[]> {
     // -z separates with NUL so paths with newlines/quotes are safe.
-    const out = execSync(
-      "git ls-files -z --cached --others --exclude-standard",
-      { cwd: this.basePath, encoding: "buffer", maxBuffer: 256 * 1024 * 1024 }
-    );
+    const out = execSync("git ls-files -z --cached --others --exclude-standard", {
+      cwd: this.basePath,
+      encoding: "buffer",
+      maxBuffer: 256 * 1024 * 1024
+    });
 
-    const paths = out
-      .toString("utf-8")
-      .split("\0")
-      .filter(Boolean);
+    const paths = out.toString("utf-8").split("\0").filter(Boolean);
 
     const extSet = new Set(this.extensions);
-    const candidates = paths.filter(
-      (p) => extSet.has(extname(p)) && !this.isIgnored(p)
-    );
+    const candidates = paths.filter((p) => extSet.has(extname(p)) && !this.isIgnored(p));
 
     return this.readFiles(candidates);
   }

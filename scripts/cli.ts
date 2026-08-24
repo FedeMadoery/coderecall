@@ -6,14 +6,7 @@ import { CodeChunker } from "../src/indexer/chunker";
 import { FileScanner } from "../src/indexer/scanner";
 import { ObsidianImporter } from "../src/indexer/obsidian";
 import { MarkdownImporter } from "../src/indexer/markdown";
-import {
-  loadConfig,
-  detectLanguage,
-  DEFAULT_IGNORE,
-  DEFAULTS,
-  LANGUAGE_PRESETS,
-  parseExtensions
-} from "../src/config";
+import { loadConfig, detectLanguage, DEFAULT_IGNORE, DEFAULTS, LANGUAGE_PRESETS, parseExtensions } from "../src/config";
 import type { LanguagePreset } from "../src/config";
 
 import type { ExpansionMode, IndexFreshness } from "../src/types";
@@ -150,9 +143,8 @@ async function main() {
       case "index": {
         const targetPath = parsed.positionals[0] || projectRoot;
         const extensions =
-          (typeof parsed.flags["extensions"] === "string"
-            ? (parsed.flags["extensions"] as string).split(",")
-            : null) || config.extensions;
+          (typeof parsed.flags["extensions"] === "string" ? (parsed.flags["extensions"] as string).split(",") : null) ||
+          config.extensions;
         const absolutePath = resolve(targetPath);
 
         console.log(`Indexing ${absolutePath}...`);
@@ -286,7 +278,10 @@ async function main() {
           title,
           content: contentLines.join("\n"),
           category: category as any,
-          tags: tagsInput.split(",").map((t) => t.trim()).filter(Boolean)
+          tags: tagsInput
+            .split(",")
+            .map((t) => t.trim())
+            .filter(Boolean)
         });
 
         const vector = await embeddings.embed(`${entry.title}\n${entry.content}`);
@@ -377,7 +372,8 @@ async function runInit(parsed: ParsedOptions) {
 
   console.log(`Initializing coderecall in: ${targetRoot}\n`);
 
-  const flagLanguage = typeof parsed.flags["language"] === "string" ? (parsed.flags["language"] as string).toLowerCase() : null;
+  const flagLanguage =
+    typeof parsed.flags["language"] === "string" ? (parsed.flags["language"] as string).toLowerCase() : null;
   const flagExtensions = typeof parsed.flags["extensions"] === "string" ? (parsed.flags["extensions"] as string) : null;
 
   const detected = detectLanguage(targetRoot);
@@ -427,14 +423,9 @@ async function runInit(parsed: ParsedOptions) {
 
   // 2. .mcp.json (project-level Claude Code config)
   if (writeMcp) {
-    const mcpPath =
-      client === "cursor"
-        ? join(targetRoot, ".cursor", "mcp.json")
-        : join(targetRoot, ".mcp.json");
+    const mcpPath = client === "cursor" ? join(targetRoot, ".cursor", "mcp.json") : join(targetRoot, ".mcp.json");
 
-    const serverEntryArg = isVendored
-      ? "./" + relative(targetRoot, SERVER_ENTRY)
-      : SERVER_ENTRY;
+    const serverEntryArg = isVendored ? "./" + relative(targetRoot, SERVER_ENTRY) : SERVER_ENTRY;
 
     const mcpEntry: { command: string; args: string[]; env?: Record<string, string> } = {
       command: "bun",
@@ -468,7 +459,7 @@ async function runInit(parsed: ParsedOptions) {
         console.log(`Updated ${mcpPath}`);
       }
     } else {
-      mcpDoc = { mcpServers: { "coderecall": mcpEntry } };
+      mcpDoc = { mcpServers: { coderecall: mcpEntry } };
       mkdirSync(dirname(mcpPath), { recursive: true });
       writeFileSync(mcpPath, JSON.stringify(mcpDoc, null, 2) + "\n");
       console.log(`Wrote ${mcpPath}`);
@@ -526,9 +517,7 @@ async function resolveLanguageChoice(opts: {
   if (opts.flagLanguage) {
     const preset = LANGUAGE_PRESETS[opts.flagLanguage];
     if (!preset) {
-      console.error(
-        `Unknown --language "${opts.flagLanguage}". Known: ${Object.keys(LANGUAGE_PRESETS).join(", ")}.`
-      );
+      console.error(`Unknown --language "${opts.flagLanguage}". Known: ${Object.keys(LANGUAGE_PRESETS).join(", ")}.`);
       console.error(`Or pass extensions directly: --extensions ".foo,.bar"`);
       process.exit(1);
     }
@@ -636,7 +625,9 @@ function renderTiered(results: any[]) {
   const fullCount = results.filter((r) => r.expansion === "full").length;
   const summaryCount = results.filter((r) => r.expansion === "summary").length;
   const metadataCount = results.filter((r) => r.expansion === "metadata").length;
-  console.log(`Found ${results.length} results (${fullCount} full, ${summaryCount} summary, ${metadataCount} metadata-only)\n`);
+  console.log(
+    `Found ${results.length} results (${fullCount} full, ${summaryCount} summary, ${metadataCount} metadata-only)\n`
+  );
 
   for (const r of results) {
     const emoji = r.confidence === "high" ? "🟢" : r.confidence === "medium" ? "🟡" : "🔴";
@@ -646,7 +637,9 @@ function renderTiered(results: any[]) {
       console.log(`  Score: ${r.score.toFixed(4)} | Confidence: ${r.confidence}`);
       if (r.signature) console.log(`  Signature: ${r.signature}`);
       if (r.expansion === "full" && r.content) {
-        console.log(`  Content:\n${r.content.slice(0, 300).replace(/^/gm, "    ")}${r.content.length > 300 ? "..." : ""}`);
+        console.log(
+          `  Content:\n${r.content.slice(0, 300).replace(/^/gm, "    ")}${r.content.length > 300 ? "..." : ""}`
+        );
       } else if (r.expansion === "summary" && r.summary) {
         console.log(`  Summary: ${r.summary}`);
       }
@@ -656,7 +649,9 @@ function renderTiered(results: any[]) {
       console.log(`  Score: ${r.score.toFixed(4)} | Confidence: ${r.confidence}`);
       console.log(`  Tags: ${r.tags?.join(", ") || "none"}`);
       if (r.expansion === "full" && r.content) {
-        console.log(`  Content:\n${r.content.slice(0, 300).replace(/^/gm, "    ")}${r.content.length > 300 ? "..." : ""}`);
+        console.log(
+          `  Content:\n${r.content.slice(0, 300).replace(/^/gm, "    ")}${r.content.length > 300 ? "..." : ""}`
+        );
       } else if (r.expansion === "summary" && r.summary) {
         console.log(`  Summary: ${r.summary}`);
       }

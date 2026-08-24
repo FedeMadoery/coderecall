@@ -1,13 +1,6 @@
 import { Database } from "bun:sqlite";
 import { SCHEMA } from "./schema";
-import type {
-  KnowledgeEntry,
-  CodeFile,
-  CodeChunk,
-  IndexStats,
-  IndexFreshness,
-  IndexFreshnessStatus
-} from "../types";
+import type { KnowledgeEntry, CodeFile, CodeChunk, IndexStats, IndexFreshness, IndexFreshnessStatus } from "../types";
 import { createHash, randomUUID } from "crypto";
 
 type CachedEmbedding = { source_type: "code" | "knowledge"; source_id: string; vector: Float32Array };
@@ -265,9 +258,7 @@ export class MemoryDatabase {
 
   private populateEmbeddingsCache() {
     if (this.embeddingsCache !== null) return;
-    const rows = this.db
-      .prepare("SELECT source_type, source_id, vector FROM embeddings")
-      .all() as any[];
+    const rows = this.db.prepare("SELECT source_type, source_id, vector FROM embeddings").all() as any[];
 
     const cache: CachedEmbedding[] = [];
     const index = new Map<string, number>();
@@ -387,9 +378,7 @@ export class MemoryDatabase {
   }
 
   getMeta(key: string): string | null {
-    const row = this.db.prepare("SELECT value FROM meta WHERE key = ?").get(key) as
-      | { value: string }
-      | undefined;
+    const row = this.db.prepare("SELECT value FROM meta WHERE key = ?").get(key) as { value: string } | undefined;
     return row?.value ?? null;
   }
 

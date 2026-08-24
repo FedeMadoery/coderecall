@@ -251,10 +251,7 @@ export class MarkdownImporter {
   /**
    * Determine category from path structure or frontmatter
    */
-  determineCategory(
-    relativePath: string,
-    frontmatter: MarkdownFrontmatter
-  ): KnowledgeCategory {
+  determineCategory(relativePath: string, frontmatter: MarkdownFrontmatter): KnowledgeCategory {
     // Check frontmatter first
     const fmCategory = frontmatter.category;
     if (fmCategory && ["architecture", "decision", "pattern", "note", "troubleshooting"].includes(String(fmCategory))) {

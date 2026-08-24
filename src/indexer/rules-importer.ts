@@ -144,7 +144,10 @@ export class RulesImporter {
     let processedContent = content;
     processedContent = processedContent.replace(/<!--\s*usage-rules-start\s*-->/, "");
     processedContent = processedContent.replace(/<!--\s*usage-rules-end\s*-->/, "");
-    processedContent = processedContent.replace(/<!--\s*usage-rules-header\s*-->[\s\S]*?<!--\s*usage-rules-header-end\s*-->/, "");
+    processedContent = processedContent.replace(
+      /<!--\s*usage-rules-header\s*-->[\s\S]*?<!--\s*usage-rules-header-end\s*-->/,
+      ""
+    );
 
     // Match <!-- name-start --> ... <!-- name-end --> patterns
     const sectionRegex = /<!--\s*(\S+)-start\s*-->([\s\S]*?)<!--\s*\1-end\s*-->/g;

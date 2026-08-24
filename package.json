@@ -15,7 +15,9 @@
     "index": "bun run scripts/cli.ts index",
     "search": "bun run scripts/cli.ts search",
     "stats": "bun run scripts/cli.ts stats",
-    "test": "bun test"
+    "test": "bun test",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
   },
   "engines": {
     "bun": ">=1.1.0"

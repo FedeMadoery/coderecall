@@ -94,7 +94,9 @@ export class CoderecallServer {
           expansion_mode: z
             .enum(["all", "selective", "metadata_only"])
             .default("selective")
-            .describe("Expansion mode: 'all' (full content), 'selective' (tiered by confidence), 'metadata_only' (minimal)")
+            .describe(
+              "Expansion mode: 'all' (full content), 'selective' (tiered by confidence), 'metadata_only' (minimal)"
+            )
         }
       },
       async (args) => {
@@ -405,4 +407,3 @@ export class CoderecallServer {
     this.db.close();
   }
 }
-

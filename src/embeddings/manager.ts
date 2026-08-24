@@ -54,9 +54,10 @@ export class EmbeddingManager {
       // Batched output shape is [batch, dim]; output.data is a flat Float32Array
       // of length batch * dim. Slice into per-row Float32Arrays.
       const flat = output.data as unknown as Float32Array;
-      const dim = Array.isArray(output.dims) && output.dims.length >= 2
-        ? (output.dims[output.dims.length - 1] as number)
-        : flat.length / batch.length;
+      const dim =
+        Array.isArray(output.dims) && output.dims.length >= 2
+          ? (output.dims[output.dims.length - 1] as number)
+          : flat.length / batch.length;
 
       for (let j = 0; j < batch.length; j++) {
         results.push(new Float32Array(flat.slice(j * dim, (j + 1) * dim)));
