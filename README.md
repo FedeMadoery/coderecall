@@ -13,9 +13,11 @@
 
 **coderecall** is an MCP server that turns any local repo into a searchable index your AI coding agent can query directly — code *and* the notes, decisions, and patterns you've accumulated about it. It runs entirely on your laptop. No OpenAI key. No Ollama. No vector DB to host. Vendor it into your project, run init, restart Claude Code.
 
-- **Confidence-tiered context.** Searches return full content for high-confidence hits, summaries for medium, and metadata-only stubs for the rest — so the model spends tokens where it's confident, not everywhere.
+- **Confidence-tiered context.** Searches return full content for high-confidence hits, summaries for medium, and metadata-only stubs for the rest — so the model spends tokens where it's confident, not everywhere. Thresholds are fitted per query intent against a labelled query set, not picked by hand: 83% of full-expanded results are correct answers.
+- **Retrieval adapts to the question.** An identifier lookup and a "how does X work" question get different pool sizes, different keyword/vector weights, and different expansion thresholds. Pass `search_type`, or let it infer from the query shape.
 - **Knows when it's stale.** Every search response embeds a banner the agent can see (`🟡 Index is 17 days old`), so the model can prompt you to reindex instead of silently searching old code.
 - **Code + knowledge in one call.** `add_knowledge("we use SWR not React Query because…")` lives next to your source in the same index, retrieved by the same `search` tool.
+- **Git history, no index required.** `search_history` reads git directly — commit messages, a file's history, line-by-line blame, one commit's detail. It is the one retrieval path that can never be stale, and it works on a repo you haven't indexed yet.
 - **6 languages with real parsers** — TypeScript/JavaScript, Python, Go, Rust, Ruby, Elixir — plus a generic fallback. Adding a new one is a single file.
 - **Truly local.** Embeddings run in-process via `Snowflake/snowflake-arctic-embed-s` (384-D, ~34 MB on first run). Index lives in a single `.coderecall/index.db` — gitignored per developer, vectors never travel through git. The tool itself is vendored at `tools/coderecall/` and committed, so the whole team stays on the same pinned version.
 
@@ -33,6 +35,7 @@
 | `git diff` aware incremental reindex | ✅ | partial | n/a | ❌ |
 | Removes deleted/renamed files from the index | ✅ | ❌ | n/a | ❌ |
 | Searches git history (commits, blame) | ✅ | ❌ | ❌ | ❌ |
+| Retrieval tuned against a labelled query set | ✅ | ❌ | ❌ | ❌ |
 | Works with any MCP client | ✅ | ✅ | ✅ | ❌ (VS Code extension) |
 
 ---
@@ -89,8 +92,29 @@ Before reading source files directly, **search the index first**:
 
   mcp__coderecall__search("how does authentication work")
 
-Use `filter: "code"` or `filter: "knowledge"` to narrow. The index covers
-this repo and any knowledge entries added via `add_knowledge`.
+- Looking up a specific symbol? Pass `search_type: "definition"` — it narrows
+  the search and returns exact name matches in full.
+- Conceptual question? `search_type: "topic"` (or omit it; the shape of the
+  query is inferred).
+- Narrow by kind with `filter: "code"` or `filter: "knowledge"`.
+
+The index covers this repo's code plus any knowledge entries added via
+`add_knowledge`.
+
+**For questions about change over time, use git history instead** — it needs no
+index and is never stale:
+
+  mcp__coderecall__search_history({ mode: "commits", query: "rate limit" })
+  mcp__coderecall__search_history({ mode: "file_history", path: "src/auth.ts" })
+  mcp__coderecall__search_history({ mode: "blame", path: "src/auth.ts",
+                                    line_start: 40, line_end: 60 })
+
+Reach for it on "when did this change", "why was this added", "who last touched
+these lines".
+
+**Write down decisions as you make them** with `add_knowledge` — architecture
+choices, rejected alternatives, and the reasoning behind them. That is the part
+of a repo that cannot be reconstructed from the source later.
 ```
 
 ---
@@ -295,11 +319,17 @@ coderecall import-obsidian --vault /path/to/vault
 coderecall import-knowledge-file ./NOTES.md --category note
 ```
 
+Every command also takes `--db <path>` to point at a specific index file or
+directory instead of the one from config — useful for measuring against a copy
+without touching your working index.
+
 `init` resolution order for which extensions to index: `--extensions` flag → `--language` preset → auto-detect from manifest → interactive prompt (TTY) → exit with instructions (non-TTY, so an agent can ask you).
 
 Known `--language` presets: `typescript`, `javascript`, `python`, `ruby`, `go`, `rust`, `elixir`, `java`, `kotlin`, `swift`, `csharp`, `cpp`, `php`.
 
-All commands honor `CODERECALL_PROJECT_ROOT`, `CODERECALL_INDEX_PATH`, `CODERECALL_EXTENSIONS`, `CODERECALL_IGNORE`, and `CODERECALL_EMBEDDING_MODEL`.
+All commands honor `CODERECALL_PROJECT_ROOT`, `CODERECALL_INDEX_PATH`, `CODERECALL_EXTENSIONS`, `CODERECALL_IGNORE`, `CODERECALL_EMBEDDING_MODEL`, and `CODERECALL_QUERY_PREFIX`.
+
+`history` and `stats` never load the embedding model, so they return immediately rather than paying a model load for work that needs neither vectors nor the index.
 
 </details>
 
@@ -339,6 +369,12 @@ All commands honor `CODERECALL_PROJECT_ROOT`, `CODERECALL_INDEX_PATH`, `CODERECA
 **Search returns deleted files** — run `coderecall index` from the project root; it prunes files that no longer exist. If you've only ever run scoped scans (`coderecall index ./src`), those don't prune by design — run it once from the root.
 
 **First search/index is slow** — first run downloads the ~30 MB embedding model. Subsequent runs use the local cache.
+
+**`search_history` says "Not a git repository"** — history reads git directly, so it needs a working tree at the project root. It has nothing to do with the index; `coderecall index` will not help.
+
+**`search_history` finds nothing in a clone** — check for a shallow clone (`git rev-parse --is-shallow-repository`). History is genuinely absent there, and responses say so rather than pretending the answer is "no results".
+
+**Search got worse after changing `embeddingModel`** — a model change needs a reindex; vectors from a different model are not comparable. Startup prints an explicit mismatch warning, so check stderr. Fix with `rm -rf .coderecall && coderecall index`.
 
 **Type errors when editing** — `bun install && bunx tsc --noEmit`.
 

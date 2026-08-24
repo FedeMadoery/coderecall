@@ -53,6 +53,10 @@ Init options:
                             elixir, java, kotlin, swift, csharp, cpp, php). Overrides auto-detection.
   --extensions <exts>       Comma-separated extensions (e.g. ".py,.pyx"). Overrides auto-detection.
 
+Global options:
+  --db <path>               Use a specific index file or directory instead of the one from config.
+                            Handy for evaluating a copy without touching your working index.
+
 Indexing options:
   --extensions <exts>       Comma-separated file extensions (defaults to config)
   --no-git-ls               Skip 'git ls-files'; use glob walk instead (pyvenv.cfg detection added for Python projects)
