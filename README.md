@@ -98,7 +98,7 @@ this repo and any knowledge entries added via `add_knowledge`.
 
 | Tool | Purpose |
 |---|---|
-| `search` | Confidence-tiered search — returns full / summary / metadata tiers. **Use this by default.** |
+| `search` | Intent-routed, confidence-tiered search — returns full / summary / metadata tiers. **Use this by default.** |
 | `search_memory` | Same hybrid search, always returns full content. |
 | `add_knowledge` | Store a knowledge entry (`architecture` / `decision` / `pattern` / `note` / `troubleshooting`). |
 | `list_knowledge` | List entries, optionally filtered by category or tag. |
@@ -111,15 +111,21 @@ this repo and any knowledge entries added via `add_knowledge`.
 
 ## How confidence-tiered context works
 
-The `search` tool retrieves 5× the requested number of candidates, scores them with FTS5 keyword + cosine vector + recency, enforces diversity (max 3 chunks per file), then expands each result into one of three tiers:
+The `search` tool resolves the **intent** first, then retrieves: it pools several times the requested number of candidates, scores them with an absolute FTS5 keyword score plus cosine similarity, selects greedily with a live per-file diversity penalty, and expands each result into one of three tiers.
 
-| Tier | Score | What you get |
-|---|---|---|
-| 🟢 Full | ≥ 0.7 | Complete content |
-| 🟡 Summary | 0.4 – 0.7 | Signature + first docstring line |
-| 🔴 Metadata | < 0.4 | Title, filepath, tags |
+Intent decides how it searches. `definition` (you typed an identifier) searches narrower, weights lexical match higher, and expands exact name matches; `topic` (a question in prose) searches wider and leans on semantic similarity. Pass `search_type` explicitly or let `auto` infer it from the query shape.
 
-That trade-off is the point: you spend context on results the model is *confident* about, and keep low-confidence hits visible (cheap) so the model can request expansion if needed.
+Thresholds are **per intent**, fitted to a labelled query set rather than picked as round numbers:
+
+| Tier | `definition` | `topic` | What you get |
+|---|---|---|---|
+| 🟢 Full | ≥ 0.78 | ≥ 0.68 | Complete content |
+| 🟡 Summary | 0.55 – 0.78 | 0.50 – 0.68 | Signature + first docstring line |
+| 🔴 Metadata | < 0.55 | < 0.50 | Title, filepath, tags |
+
+They differ because the underlying signal differs. For identifier lookups, correct and incorrect results separate cleanly, so the bar can be high and still catch everything. For conceptual questions they overlap, so `topic` deliberately expands fewer results at higher precision and lets the summary tier carry the rest.
+
+That trade-off is the point: you spend context on results the model is *confident* about, and keep low-confidence hits visible (cheap) so the model can request expansion if needed. Measured on a 30-query labelled set, 83% of full-expanded results are correct answers.
 
 ---
 
@@ -215,8 +221,9 @@ No file watcher is built in — re-indexing while a tool is reading from the DB 
 | Layer | What it does |
 |---|---|
 | **MCP tools** | search · add_knowledge · index_files · index_diff · get_file_context · get_index_stats |
-| **Confidence-tiered retrieval** | pool → scoring → diversity → tiered expansion |
-| **Hybrid search** | FTS5 (porter) + cosine 384-D |
+| **Intent routing** | `auto` / `definition` / `topic` → per-intent retrieval profile |
+| **Confidence-tiered retrieval** | pool → scoring → live diversity penalty → tiered expansion |
+| **Hybrid search** | FTS5 (porter, absolute BM25) + cosine 384-D |
 | **Indexing** | scanner → parsers → chunker → embeddings |
 | **SQLite** | knowledge_entries · code_files · code_chunks · embeddings · memory_fts |
 
@@ -233,7 +240,7 @@ A new language is **a single file** in `src/indexer/parsers/<lang>.ts` implement
 coderecall init [path] [--language <name>] [--extensions ".ext1,.ext2"] [--force] [--no-mcp]
 coderecall index [path] [--extensions ".ext1,.ext2"] [--no-git-ls] [--no-prune]
 coderecall index-diff [path] --base HEAD~1 --head HEAD
-coderecall search "<query>" [--filter code|knowledge] [--limit 10] [--expansion selective|all|metadata_only]
+coderecall search "<query>" [--filter code|knowledge] [--limit 10] [--expansion selective|all|metadata_only] [--search-type auto|definition|topic]
 coderecall search-legacy "<query>"       # full-expansion mode (no tiering)
 coderecall stats
 coderecall add-knowledge                 # interactive

@@ -10,6 +10,7 @@ import { loadConfig, detectLanguage, DEFAULT_IGNORE, DEFAULTS, LANGUAGE_PRESETS,
 import type { LanguagePreset } from "../src/config";
 
 import type { ExpansionMode, IndexFreshness } from "../src/types";
+import type { SearchType } from "../src/search/profiles";
 import { join, resolve, isAbsolute, dirname, relative, sep } from "path";
 import { mkdirSync, existsSync, readFileSync, writeFileSync, statSync } from "fs";
 import { fileURLToPath } from "url";
@@ -62,6 +63,7 @@ Search options:
   --filter <type>           all | code | knowledge
   --limit <n>               Limit results (default: 10)
   --expansion <mode>        selective | all | metadata_only
+  --search-type <type>      auto | definition | topic  (auto infers from the query shape)
 
 Examples:
   coderecall init                          # plug-and-play setup in current project
@@ -222,6 +224,7 @@ async function main() {
         }
 
         const filter = ((parsed.flags["filter"] as string) || "all") as "all" | "code" | "knowledge";
+        const searchType = ((parsed.flags["search-type"] as string) || "auto") as SearchType;
         const limit = parseInt((parsed.flags["limit"] as string) || "10");
         const expansion = ((parsed.flags["expansion"] as string) || "selective") as ExpansionMode;
 
@@ -235,7 +238,7 @@ async function main() {
           const results = await search.search(query, filter, limit);
           renderLegacy(results);
         } else {
-          const results = await search.tieredSearch(query, filter, limit, expansion);
+          const results = await search.tieredSearch(query, filter, limit, expansion, searchType);
           renderTiered(results);
         }
         break;

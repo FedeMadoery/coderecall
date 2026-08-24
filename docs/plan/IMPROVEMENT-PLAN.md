@@ -9,7 +9,7 @@ things being measured change.
 | 0 | Retrieval eval harness | ✅ **DONE** — 32 labelled queries, baseline recorded | shipped |
 | 5 | Deletion/rename pruning in full `index` | ✅ **DONE** — 16% → 0% phantom results | shipped |
 | 1 | Embedding model | ✅ **DONE** — premise refuted; switched to arctic-embed-s instead | shipped |
-| 2 | Intent routing + tier recalibration | Recalibration must follow the model swap | 2–3 d |
+| 2 | Intent routing + tier recalibration | ✅ **DONE** — MRR 0.802→0.926, full precision 57→83% | shipped |
 | 3 | `search_history` (git-backed, index-free) | Independent; closes a visible gap vs code-memory | 1 d |
 
 ---
@@ -398,7 +398,79 @@ is free.
 
 ---
 
-## Phase 2 — Intent routing on top of confidence tiering
+## Phase 2 — Intent routing + tier recalibration
+
+> **Status: shipped 2026-08-24.**
+>
+> | | arctic baseline | after Phase 2 |
+> |---|---|---|
+> | hit@10 | 100.0% | 100.0% |
+> | recall@10 | 91.1% | **92.2%** |
+> | MRR | 0.802 | **0.926** |
+> | P@1 | 70.0% | **90.0%** |
+> | full precision | 57.1% | **82.8%** |
+>
+> Per intent after: definition MRR 1.000 / P@1 100% / full precision 100%;
+> knowledge 0.906 / 87.5% / 75.0%; topic 0.853 / 80.0% / 69.2%. False
+> confidence 0/30 and negatives 0/2 throughout.
+>
+> ### What landed, and why it had to land together
+>
+> **Absolute keyword scores.** `keywordSearch` divided BM25 rank by the best
+> rank *in the same result set*, so the top hit scored exactly 1.000 on every
+> query — measured on 30 of 30. The keyword leg was a constant. Replaced with a
+> saturating transform (`1 - exp(-|bm25|/10)`), K fitted to the measured
+> distribution (p25 7.3, p50 9.0, p90 14.1, max 22.0).
+>
+> **Recency removed entirely.** It contributed up to 0.2, but only knowledge
+> entries had a usable timestamp; code chunks hit a hardcoded 0.5 default and
+> took a flat +0.1. It was never a recency signal — just a standing bonus for
+> knowledge entries, and the direct cause of Finding C. `code_files.indexed_at`
+> cannot substitute: it records when indexing ran, identical across a full
+> reindex. Weights now sum to 1, so a score reads as a confidence.
+>
+> **Diversity penalty made live.** Candidates were all scored before the
+> seen-files map was populated, so the penalty was always multiplied by zero.
+> Selection is now greedy and incremental, re-scoring after each pick.
+>
+> These three shift the score scale, which is why the plan insisted on one
+> atomic change: fixing the normalization alone would have collapsed the full
+> tier, since its inflation was propping scores over a threshold tuned around it.
+>
+> **Thresholds fitted per intent, not guessed.** Sweeping correct-vs-incorrect
+> score distributions produced two genuinely different pictures, which is the
+> real argument for profiles:
+>
+> - `definition` **separates cleanly** — correct results 0.81–0.85, best wrong
+>   result 0.757. A threshold at 0.78 captures every right answer at ~100%
+>   precision.
+> - `topic` **does not separate** — correct p10 0.531 / p50 0.646 versus wrong
+>   p50 0.584 / p90 0.652. No threshold gets both precision and coverage, so it
+>   expands few results at 0.68 (~71% precision, ~34% coverage) and lets the
+>   summary tier carry the rest. Reaching 80% coverage would mean 34% precision:
+>   spending most of the budget on wrong answers.
+>
+> **Intent routing.** `search_type: auto | definition | topic` on the MCP tool
+> and `--search-type` on the CLI. `auto` infers from query shape and is
+> deliberately conservative — only identifier-shaped queries route to
+> `definition`, because misrouting a conceptual question is the costlier error.
+> A `definition` query also gets an exact-chunk-name boost, since BM25 happily
+> ranks a file that *mentions* an identifier above the one that *defines* it.
+>
+> ### Scope honesty
+>
+> - **`references` was dropped, as the research predicted.** Regex parsers give
+>   no call graph, and naming a tool `references` that cannot answer "who calls
+>   this" would be a lie. `file_structure` was also dropped: `get_file_context`
+>   already covers it.
+> - **Thresholds are fitted on the same 30 queries used to score, with no
+>   held-out split, so the numbers are optimistic.** Widening the fixture and
+>   refitting is the honest next step before quoting 83% anywhere load-bearing.
+> - Thresholds are **not portable across embedding models**; a model whose
+>   scores run lower expands less often. Changing `embeddingModel` should mean
+>   re-running the calibration sweep.
+
+## Original research plan
 
 code-memory makes the agent choose a retrieval strategy *before* fetching
 (`search_type: topic_discovery | definition | references | file_structure`).

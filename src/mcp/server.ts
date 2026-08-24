@@ -9,6 +9,7 @@ import { HybridSearch } from "../search/hybrid";
 import { CodeChunker } from "../indexer/chunker";
 import { FileScanner } from "../indexer/scanner";
 import type { ExpansionMode, IndexFreshness, TieredResult } from "../types";
+import type { SearchType } from "../search/profiles";
 import type { CoderecallConfig } from "../config";
 
 function freshnessBanner(f: IndexFreshness): string {
@@ -86,7 +87,7 @@ export class CoderecallServer {
       "search",
       {
         description:
-          "Search code and knowledge with confidence-tiered expansion. Returns each result at one of three tiers (full content / summary / metadata-only) based on how confident the ranker is about it — so high-signal hits get full context and low-signal hits stay cheap.",
+          "Search code and knowledge with confidence-tiered expansion. Returns each result at one of three tiers (full content / summary / metadata-only) based on how confident the ranker is about it — so high-signal hits get full context and low-signal hits stay cheap. Retrieval adapts to the kind of question via search_type.",
         inputSchema: {
           query: z.string().describe("Natural language search query"),
           filter: z.enum(["all", "code", "knowledge"]).default("all").describe("Filter results by type"),
@@ -96,12 +97,24 @@ export class CoderecallServer {
             .default("selective")
             .describe(
               "Expansion mode: 'all' (full content), 'selective' (tiered by confidence), 'metadata_only' (minimal)"
+            ),
+          search_type: z
+            .enum(["auto", "definition", "topic"])
+            .default("auto")
+            .describe(
+              "What kind of question this is. 'definition' when the query IS an identifier you want the declaration of (a class, function, or method name) — narrows the search and expands exact name matches in full. 'topic' for conceptual questions in prose ('how does X work', 'where is Y handled') — searches wider and leans on semantic similarity. 'auto' (default) infers it from the query shape, so passing it is an optimisation, not a requirement."
             )
         }
       },
       async (args) => {
-        const { query, filter = "all", limit = 10, expansion_mode = "selective" } = args;
-        const results = await this.search.tieredSearch(query, filter, limit, expansion_mode as ExpansionMode);
+        const { query, filter = "all", limit = 10, expansion_mode = "selective", search_type = "auto" } = args;
+        const results = await this.search.tieredSearch(
+          query,
+          filter,
+          limit,
+          expansion_mode as ExpansionMode,
+          search_type as SearchType
+        );
 
         const formatted = results.map((r) => this.formatTieredResult(r));
 

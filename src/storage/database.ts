@@ -133,6 +133,23 @@ export class MemoryDatabase {
     return rows.map((r) => r.filepath);
   }
 
+  /** Chunk id -> chunk name, for the ids given. Used by definition-intent boosting. */
+  getChunkNames(ids: string[]): Map<string, string> {
+    const out = new Map<string, string>();
+    if (ids.length === 0) return out;
+    // Chunked IN clause: pools can exceed SQLite's variable limit on large limits.
+    const BATCH = 500;
+    for (let i = 0; i < ids.length; i += BATCH) {
+      const slice = ids.slice(i, i + BATCH);
+      const placeholders = slice.map(() => "?").join(",");
+      const rows = this.db
+        .prepare(`SELECT id, name FROM code_chunks WHERE id IN (${placeholders})`)
+        .all(...slice) as Array<{ id: string; name: string }>;
+      for (const row of rows) out.set(row.id, row.name);
+    }
+    return out;
+  }
+
   getCodeFileById(id: string): CodeFile | null {
     return this.db.prepare("SELECT * FROM code_files WHERE id = ?").get(id) as CodeFile | null;
   }
