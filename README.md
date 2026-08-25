@@ -44,19 +44,9 @@
 
 `—` means not verified rather than absent.
 
-**On code-memory specifically** ([kapillamba4/code-memory](https://github.com/kapillamba4/code-memory)):
-it is the closest neighbour and it wins where it counts for structural
-questions. Its tree-sitter parsers give symbol-accurate chunks, real reference
-lookup, and dead-code detection — none of which regex parsers can honestly
-offer. It is a **code intelligence** layer.
-
 coderecall is a **repo memory** layer: it keeps the decisions and patterns
 alongside the code, rations the context budget by confidence, and fits in
 34 MB. Different products that look alike from the outside.
-
-Its embedding model was benchmarked here directly, and lost on this corpus —
-see `docs/plan/IMPROVEMENT-PLAN.md` for the numbers, including the part where
-it was *better* than the default at symbol-level precision.
 
 ---
 
