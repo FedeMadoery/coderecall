@@ -1,0 +1,15 @@
+# Paths excluded from `git archive` output, and therefore from vendored copies.
+#
+# coderecall is vendored with `degit`, which downloads GitHub's source tarball —
+# a `git archive` product, so GitHub honours `export-ignore` here. These files
+# stay in the repository for development and never land in a consumer's
+# tools/coderecall/ directory.
+#
+# Keep src/, scripts/, templates/, README.md, and package.json: those are what
+# the tool actually needs to run.
+
+tests/            export-ignore
+docs/plan/        export-ignore
+.gitattributes    export-ignore
+.prettierrc       export-ignore
+.prettierignore   export-ignore
