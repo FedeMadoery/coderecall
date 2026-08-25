@@ -101,8 +101,6 @@ git commit -m "Add coderecall MCP server"
 
 **Updating coderecall**: re-run `bunx degit FedeMadoery/coderecall tools/coderecall --force && cd tools/coderecall && bun install` to pull the latest version. Diff and commit — your team gets the update on next pull.
 
-A vendored copy carries only what the tool needs to run: `src/`, `scripts/`, `templates/`, `package.json`, and the README. The test suite, the eval harness, and internal planning docs are excluded via `.gitattributes` `export-ignore`, so they never land in your repo. (`bun test` and `bun run eval` therefore only work in a clone of this repo, not in a vendored copy.)
-
 ### Recommended `CLAUDE.md` note
 
 Add this to your project's `CLAUDE.md` so the agent reaches for the tool first:
